@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+data/incoming/*
+data/exports/*
+data/*.db
+!data/incoming/.gitkeep
+!data/exports/.gitkeep

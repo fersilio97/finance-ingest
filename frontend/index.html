@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finance Ingestion App</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Finance Ingestion App</h1>
+    <nav>
+      <a href="index.html">Upload / Review</a>
+      <a href="insights.html">Insights</a>
+    </nav>
+  </header>
+
+  <section>
+    <h2>1. Upload</h2>
+    <p class="muted">Drop each source's CSV export(s) in the matching box, then run the pipeline.</p>
+    <div id="drop-zones" class="drop-zones"></div>
+    <div id="upload-status"></div>
+  </section>
+
+  <section>
+    <h2>2-4. Normalize, Enrich, Export</h2>
+    <button class="primary" id="trigger-btn">Run Pipeline</button>
+    <a href="/api/export/xlsx"><button>Download account_paula.xlsx</button></a>
+    <a href="/api/export/csv"><button>Download transactions.csv</button></a>
+    <div id="trigger-summary"></div>
+  </section>
+
+  <section>
+    <h2>Needs Review</h2>
+    <p class="muted">Transactions no rule (or the model stub) could classify. Classify them and optionally save the pattern as a new rule.</p>
+    <table id="review-table">
+      <thead>
+        <tr><th>Date</th><th>Source</th><th>Description</th><th>Amount</th><th>Category</th><th>Save as rule</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Rules</h2>
+    <table id="rules-table">
+      <thead>
+        <tr><th>Source</th><th>Match</th><th>Category</th><th>Priority</th><th></th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <form class="inline" id="rule-form">
+      <select name="source" id="rule-source"></select>
+      <input name="match_text" placeholder="match text" required />
+      <input name="category" placeholder="Category:Subcategory" required />
+      <input name="priority" type="number" value="100" style="width:5em" />
+      <button type="submit">Add rule</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Manual EOM Balances</h2>
+    <p class="muted">Only needed for accounts without a running balance in the source file (BoA/Fidelity credit cards, HSA, 401k).</p>
+    <table id="balances-table">
+      <thead>
+        <tr><th>Account</th><th>Month</th><th>Balance</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <form class="inline" id="balance-form">
+      <select name="account" id="balance-account"></select>
+      <input name="month" type="month" required />
+      <input name="balance" type="number" step="0.01" placeholder="Ending balance" required />
+      <button type="submit">Save balance</button>
+    </form>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>

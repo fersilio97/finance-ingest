@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finance Ingestion App — Insights</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Insights</h1>
+    <nav>
+      <a href="index.html">Upload / Review</a>
+      <a href="insights.html">Insights</a>
+    </nav>
+  </header>
+
+  <section>
+    <h2>Category totals by month</h2>
+    <div style="overflow-x:auto">
+      <table id="category-table"></table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Balance trend</h2>
+    <p class="muted">Only accounts whose source files carry a running balance (BoA Checking, Fidelity Savings) appear here.</p>
+    <canvas id="balance-chart" width="900" height="300"></canvas>
+  </section>
+
+  <section>
+    <h2>Calculator — EOM reconciliation</h2>
+    <table id="calculator-table">
+      <thead>
+        <tr><th>Account</th><th>Month</th><th>Derived balance</th><th>Recorded balance</th><th>Diff</th><th>Match</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <script src="insights.js"></script>
+</body>
+</html>
