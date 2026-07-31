@@ -1,0 +1,12 @@
+{
+  "name": "finance-ingest-tools",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only tooling for finance-ingest. The app itself is Python + vanilla JS and has no runtime Node dependency; this exists solely so agents can verify the UI in a real browser.",
+  "scripts": {
+    "ui-check": "node scripts/ui-check.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}
