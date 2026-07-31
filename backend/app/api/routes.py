@@ -2,10 +2,11 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
+from ..categories import CATEGORIES
 from ..db import SOURCES, get_conn
-from ..pipeline.enrich import enrich_all
+from ..pipeline.enrich import enrich_all, enrich_last_batch
 from ..pipeline.export import ACCOUNTS_XLSX, TRANSACTIONS_CSV, export_all
 from ..pipeline.ingest import save_upload
 from ..pipeline.normalize import normalize_all
@@ -14,6 +15,11 @@ from ..rules import store as rules_store
 router = APIRouter(prefix="/api")
 
 VALID_SOURCES = {key for key, *_ in SOURCES}
+
+
+@router.get("/categories")
+def list_categories():
+    return CATEGORIES
 
 
 @router.get("/sources")
@@ -62,11 +68,37 @@ class ClassifyRequest(BaseModel):
     category: str
     save_as_rule: bool = False
     match_text: Optional[str] = None
-    rule_source_scope: bool = True
+    source: Optional[str] = None  # rule scope: a specific source key, or None for "any source"
+
+    @field_validator("category")
+    @classmethod
+    def category_must_be_known(cls, v: str) -> str:
+        if v not in CATEGORIES:
+            raise ValueError(f"Unknown category: {v}")
+        return v
+
+    @field_validator("match_text")
+    @classmethod
+    def match_text_not_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("match_text can't be blank")
+        return v.strip() if v else v
+
+    @field_validator("source")
+    @classmethod
+    def source_must_be_known(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in VALID_SOURCES:
+            raise ValueError(f"Unknown source: {v}")
+        return v
 
 
 @router.post("/transactions/{transaction_id}/classify")
 def classify_transaction(transaction_id: int, body: ClassifyRequest):
+    if body.save_as_rule and not body.match_text:
+        raise HTTPException(
+            400, "match_text is required when save_as_rule is set — pick the keyword phrase to match on"
+        )
+
     with get_conn() as conn:
         txn = conn.execute(
             "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
@@ -76,15 +108,18 @@ def classify_transaction(transaction_id: int, body: ClassifyRequest):
 
         rule_id = None
         if body.save_as_rule:
-            match_text = body.match_text or txn["description"]
-            source = txn["source"] if body.rule_source_scope else None
-            rule_id = rules_store.create_rule(conn, source, match_text, body.category)
+            rule_id = rules_store.create_rule(conn, body.source, body.match_text, body.category)
 
         conn.execute(
             "UPDATE transactions SET category = ?, rule_id = ?, status = 'classified' WHERE id = ?",
             (body.category, rule_id, transaction_id),
         )
-    return {"ok": True}
+    # The get_conn() block above commits on exit — only now is the new rule
+    # visible to a fresh connection. Re-enrich immediately so every other
+    # needs_review transaction the new rule matches gets reclassified right
+    # away, instead of sitting stale until the next full "Run Pipeline".
+    enrich_summary = enrich_all() if body.save_as_rule else None
+    return {"ok": True, "enrich": enrich_summary}
 
 
 @router.get("/rules")
@@ -99,6 +134,20 @@ class RuleRequest(BaseModel):
     category: str
     priority: int = 100
 
+    @field_validator("category")
+    @classmethod
+    def category_must_be_known(cls, v: str) -> str:
+        if v not in CATEGORIES:
+            raise ValueError(f"Unknown category: {v}")
+        return v
+
+    @field_validator("match_text")
+    @classmethod
+    def match_text_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("match_text can't be blank")
+        return v.strip()
+
 
 @router.post("/rules")
 def add_rule(body: RuleRequest):
@@ -106,14 +155,44 @@ def add_rule(body: RuleRequest):
         rule_id = rules_store.create_rule(
             conn, body.source, body.match_text, body.category, body.priority
         )
-    return {"id": rule_id}
+    # Same reasoning as classify_transaction: re-enrich immediately so a
+    # rule added directly through this form also reclassifies any matching
+    # needs_review rows right away, not just on the next full trigger.
+    enrich_summary = enrich_all()
+    return {"id": rule_id, "enrich": enrich_summary}
+
+
+@router.put("/rules/{rule_id}")
+def edit_rule(rule_id: int, body: RuleRequest):
+    with get_conn() as conn:
+        existing = conn.execute("SELECT id FROM rules WHERE id = ?", (rule_id,)).fetchone()
+        if not existing:
+            raise HTTPException(404, "Rule not found")
+        rules_store.update_rule(conn, rule_id, body.source, body.match_text, body.category, body.priority)
+    # Scoped to the last batch only, not every needs_review row ever —
+    # an edited rule shouldn't reach back and silently re-sweep old,
+    # already-reviewed uploads.
+    enrich_summary = enrich_last_batch()
+    return {"ok": True, "enrich": enrich_summary}
 
 
 @router.delete("/rules/{rule_id}")
 def remove_rule(rule_id: int):
     with get_conn() as conn:
+        last_batch = conn.execute("SELECT MAX(batch_id) AS b FROM transactions").fetchone()["b"]
+        reverted = 0
+        if last_batch is not None:
+            # Only the most recent batch reverts to needs_review — older,
+            # already-reviewed batches that this rule also classified are
+            # left alone rather than silently reopened.
+            cur = conn.execute(
+                "UPDATE transactions SET category = NULL, rule_id = NULL, status = 'needs_review' "
+                "WHERE rule_id = ? AND batch_id = ?",
+                (rule_id, last_batch),
+            )
+            reverted = cur.rowcount
         rules_store.delete_rule(conn, rule_id)
-    return {"ok": True}
+    return {"ok": True, "reverted": reverted}
 
 
 class ManualBalanceRequest(BaseModel):

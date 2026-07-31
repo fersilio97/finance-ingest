@@ -7,36 +7,38 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header>
-    <h1>Insights</h1>
-    <nav>
-      <a href="index.html">Upload / Review</a>
-      <a href="insights.html">Insights</a>
-    </nav>
-  </header>
+  <div class="page">
+    <header class="top-bar">
+      <h1>Insights</h1>
+      <nav>
+        <a href="index.html">Upload &amp; Review</a>
+        <a href="insights.html" aria-current="page">Insights</a>
+      </nav>
+    </header>
 
-  <section>
-    <h2>Category totals by month</h2>
-    <div style="overflow-x:auto">
-      <table id="category-table"></table>
+    <section class="panel">
+      <h2>Balance trend</h2>
+      <p class="eyebrow">Accounts whose source files carry a running balance (BoA Checking, Fidelity Savings).</p>
+      <canvas id="balance-chart" width="1100" height="280"></canvas>
+      <div id="balance-empty" class="empty-state" hidden></div>
+    </section>
+
+    <div class="split">
+      <section class="panel">
+        <h2>Category totals by month</h2>
+        <div class="table-scroll">
+          <table id="category-table"></table>
+        </div>
+        <div id="category-empty" class="empty-state" hidden></div>
+      </section>
+
+      <section class="panel">
+        <h2>Calculator — EOM reconciliation</h2>
+        <div id="calculator-list"></div>
+        <div id="calculator-empty" class="empty-state" hidden></div>
+      </section>
     </div>
-  </section>
-
-  <section>
-    <h2>Balance trend</h2>
-    <p class="muted">Only accounts whose source files carry a running balance (BoA Checking, Fidelity Savings) appear here.</p>
-    <canvas id="balance-chart" width="900" height="300"></canvas>
-  </section>
-
-  <section>
-    <h2>Calculator — EOM reconciliation</h2>
-    <table id="calculator-table">
-      <thead>
-        <tr><th>Account</th><th>Month</th><th>Derived balance</th><th>Recorded balance</th><th>Diff</th><th>Match</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </section>
+  </div>
 
   <script src="insights.js"></script>
 </body>

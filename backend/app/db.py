@@ -12,6 +12,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS transactions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     external_id TEXT NOT NULL UNIQUE,
+    original_id TEXT,
     source TEXT NOT NULL,
     account TEXT NOT NULL,
     date TEXT NOT NULL,
@@ -30,6 +31,11 @@ CREATE TABLE IF NOT EXISTS rules (
     match_text TEXT NOT NULL,
     category TEXT NOT NULL,
     priority INTEGER NOT NULL DEFAULT 100,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -72,9 +78,48 @@ def get_conn():
         conn.close()
 
 
+def _ensure_column(conn, table: str, column: str, coltype: str) -> None:
+    """CREATE TABLE IF NOT EXISTS won't retrofit new columns onto an
+    existing DB file — this adds one if it's missing, so schema changes
+    don't require deleting the DB (aside from the one-off reset needed for
+    the category taxonomy change)."""
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+
+def create_batch(conn) -> int:
+    """One row per normalize_all() run. Rows an INSERT OR IGNORE skips as
+    duplicates keep their original batch_id — so MAX(batch_id) on
+    transactions naturally means 'the last upload that actually added
+    something new', which is what rule edit/delete re-analysis scopes to."""
+    cur = conn.execute("INSERT INTO batches DEFAULT VALUES")
+    return cur.lastrowid
+
+
+def get_last_batch_id(conn):
+    row = conn.execute("SELECT MAX(batch_id) AS b FROM transactions").fetchone()
+    return row["b"]
+
+
+def _backfill_batch_ids(conn) -> None:
+    """One-time migration: transactions inserted before batch tracking
+    existed have batch_id IS NULL. Group them into a single legacy batch so
+    'last batch' semantics (rule edit/delete re-analysis scope) still work
+    for pre-existing data instead of silently no-op'ing forever. Idempotent
+    — once backfilled, nothing has a NULL batch_id and this is a no-op."""
+    orphans = conn.execute("SELECT COUNT(*) AS n FROM transactions WHERE batch_id IS NULL").fetchone()["n"]
+    if orphans:
+        batch_id = create_batch(conn)
+        conn.execute("UPDATE transactions SET batch_id = ? WHERE batch_id IS NULL", (batch_id,))
+
+
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
+        _ensure_column(conn, "transactions", "original_id", "TEXT")
+        _ensure_column(conn, "transactions", "batch_id", "INTEGER")
+        _backfill_batch_ids(conn)
         for key, label, account, has_balance in SOURCES:
             conn.execute(
                 "INSERT OR IGNORE INTO sources (key, label, account, has_running_balance) "

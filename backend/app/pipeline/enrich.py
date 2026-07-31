@@ -1,16 +1,28 @@
 """Stage 3: rule engine -> ML stub -> needs_review for whatever's left."""
 
+from typing import Optional
+
 from ..classifier.model_stub import predict
-from ..db import get_conn
+from ..db import get_conn, get_last_batch_id
 from ..rules.engine import apply_rules
 
 
-def enrich_all() -> dict:
+def enrich_all(batch_id: Optional[int] = None) -> dict:
+    """Re-run classification over needs_review transactions. With no
+    batch_id, considers every needs_review row (used by the full pipeline
+    trigger); scoped to batch_id, only that upload's rows are touched."""
     classified = 0
     with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, source, description FROM transactions WHERE status = 'needs_review'"
-        ).fetchall()
+        if batch_id is not None:
+            rows = conn.execute(
+                "SELECT id, source, description FROM transactions "
+                "WHERE status = 'needs_review' AND batch_id = ?",
+                (batch_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT id, source, description FROM transactions WHERE status = 'needs_review'"
+            ).fetchall()
         for row in rows:
             category, rule_id = apply_rules(conn, row["source"], row["description"])
             if category is None:
@@ -23,3 +35,11 @@ def enrich_all() -> dict:
                 )
                 classified += 1
     return {"classified": classified, "considered": len(rows)}
+
+
+def enrich_last_batch() -> dict:
+    with get_conn() as conn:
+        batch_id = get_last_batch_id(conn)
+    if batch_id is None:
+        return {"classified": 0, "considered": 0}
+    return enrich_all(batch_id=batch_id)

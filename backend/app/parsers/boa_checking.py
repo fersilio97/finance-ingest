@@ -31,6 +31,7 @@ def parse(path, account: str = "BoA Checking") -> list[dict]:
                 "amount": amount,
                 "balance_after": balance_after,
                 "external_id": make_hash_id(SOURCE, account, date, description, amount),
+                "original_id": None,
             }
         )
     return rows

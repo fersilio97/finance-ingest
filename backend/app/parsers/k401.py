@@ -27,6 +27,7 @@ def parse(path, account: str = "401k") -> list[dict]:
                 "amount": amount,
                 "balance_after": None,
                 "external_id": make_hash_id(SOURCE, account, date, description, amount),
+                "original_id": None,
             }
         )
     return rows

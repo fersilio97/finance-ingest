@@ -1,8 +1,12 @@
 __pycache__/
 *.pyc
 .venv/
+node_modules/
+.artifacts/
+*.stackdump
 data/incoming/*
 data/exports/*
 data/*.db
+data/*.bak-*
 !data/incoming/.gitkeep
 !data/exports/.gitkeep

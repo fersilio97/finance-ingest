@@ -24,6 +24,7 @@ def parse(path, account: str = "BoA Credit Card") -> list[dict]:
                 "amount": amount,
                 "balance_after": None,
                 "external_id": f"{SOURCE}:{reference}",
+                "original_id": reference,
             }
         )
     return rows

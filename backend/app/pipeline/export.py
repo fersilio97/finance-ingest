@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from ..categories import CATEGORIES
 from ..db import get_conn
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -16,14 +17,16 @@ ACCOUNTS_XLSX = EXPORTS_DIR / "account_paula.xlsx"
 
 
 TRANSACTIONS_COLUMNS = [
-    "date", "account", "source", "description", "amount", "balance_after", "category", "status",
+    "transaction_id", "original_transaction_id", "date", "account", "source",
+    "description", "amount", "balance_after", "category", "status",
 ]
 MANUAL_BALANCES_COLUMNS = ["account", "month", "recorded_balance"]
 
 
 def load_transactions(conn) -> pd.DataFrame:
     rows = conn.execute(
-        "SELECT date, account, source, description, amount, balance_after, category, status "
+        "SELECT id AS transaction_id, original_id AS original_transaction_id, "
+        "date, account, source, description, amount, balance_after, category, status "
         "FROM transactions ORDER BY date, id"
     ).fetchall()
     if not rows:
@@ -38,15 +41,23 @@ def load_manual_balances(conn) -> pd.DataFrame:
     return pd.DataFrame([dict(r) for r in rows])
 
 
+# Matches the reference accounts.xlsx Global tab: months as rows, the 21
+# fixed categories as columns in the reference's exact order, plus a
+# trailing bucket for the automated review queue (the hand-maintained
+# reference never has an "uncategorized" state) and a row total.
+GLOBAL_COLUMNS = CATEGORIES + ["Uncategorized"]
+
+
 def build_global(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
-        return pd.DataFrame(columns=["category"])
+        return pd.DataFrame(columns=["month"] + GLOBAL_COLUMNS + ["Total"])
     df = df.copy()
     df["month"] = df["date"].str.slice(0, 7)
     df["category"] = df["category"].fillna("Uncategorized")
-    pivot = df.pivot_table(index="category", columns="month", values="amount", aggfunc="sum", fill_value=0)
+    pivot = df.pivot_table(index="month", columns="category", values="amount", aggfunc="sum", fill_value=0)
+    pivot = pivot.reindex(columns=GLOBAL_COLUMNS, fill_value=0)
     pivot["Total"] = pivot.sum(axis=1)
-    return pivot.reset_index()
+    return pivot.reset_index().sort_values("month").reset_index(drop=True)
 
 
 def build_calculator(df: pd.DataFrame, manual: pd.DataFrame) -> pd.DataFrame:

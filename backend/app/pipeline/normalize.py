@@ -1,7 +1,7 @@
 """Stage 2: run each source's parser over its incoming files, dedupe
 against the DB (unique external_id), insert only new rows."""
 
-from ..db import SOURCES, get_conn
+from ..db import SOURCES, create_batch, get_conn
 from ..parsers import PARSERS
 from .ingest import list_incoming
 
@@ -11,6 +11,7 @@ ACCOUNTS = {key: account for key, _label, account, _has_balance in SOURCES}
 def normalize_all() -> dict:
     summary = {}
     with get_conn() as conn:
+        batch_id = create_batch(conn)
         for source, parser in PARSERS.items():
             files = list_incoming(source)
             account = ACCOUNTS.get(source, source)
@@ -20,18 +21,23 @@ def normalize_all() -> dict:
                 rows = parser(f, account=account)
                 parsed += len(rows)
                 for row in rows:
+                    # INSERT OR IGNORE means duplicates (already-seen
+                    # external_id) keep whatever batch_id they already had —
+                    # only genuinely new rows get stamped with this run's.
                     cur = conn.execute(
                         "INSERT OR IGNORE INTO transactions "
-                        "(external_id, source, account, date, description, amount, balance_after, status) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, 'needs_review')",
+                        "(external_id, original_id, source, account, date, description, amount, balance_after, status, batch_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'needs_review', ?)",
                         (
                             row["external_id"],
+                            row.get("original_id"),
                             source,
                             account,
                             row["date"],
                             row["description"],
                             row["amount"],
                             row["balance_after"],
+                            batch_id,
                         ),
                     )
                     if cur.rowcount:
