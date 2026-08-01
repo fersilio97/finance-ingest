@@ -56,45 +56,111 @@ async function renderCategoryTable() {
   table.append(thead, tbody);
 }
 
+// Spec 003 §A: every account-month resolves to exactly one of three states.
+// "not_checked" and "off" are computed server-side (build_calculator() in
+// pipeline/export.py) specifically so this file never has to re-derive the
+// NaN-vs-mismatch distinction that caused the original bug.
+const STATE_LABEL = { not_checked: "Not checked", balanced: "Balanced", off: "Off by" };
+const STATE_ORDER = { off: 0, not_checked: 1, balanced: 2 }; // differences first, then unknowns, then the quiet green tail
+
+function money(v) {
+  return v != null ? v.toFixed(2) : "—";
+}
+
+function calculatorSummary(rows) {
+  const summaryEl = document.getElementById("calculator-summary");
+  const offCount = rows.filter((r) => r.status === "off").length;
+  const checkedCount = rows.filter((r) => r.status !== "not_checked").length;
+
+  summaryEl.className = "calc-summary";
+  if (checkedCount === 0) {
+    summaryEl.classList.add("muted");
+    summaryEl.textContent = "No end-of-month balances recorded yet — nothing to check against.";
+  } else if (offCount === 0) {
+    summaryEl.classList.add("positive");
+    summaryEl.textContent = `All ${checkedCount} account-month${checkedCount === 1 ? "" : "s"} reconcile.`;
+  } else {
+    summaryEl.classList.add("negative");
+    summaryEl.textContent = `${offCount} of ${rows.length} account-month${rows.length === 1 ? "" : "s"} ${offCount === 1 ? "is" : "are"} off.`;
+  }
+}
+
+function buildCalculatorCard(r) {
+  const card = document.createElement("div");
+  card.className = `calc-card calc-state-${r.status}`;
+
+  const identity = document.createElement("div");
+  identity.className = "calc-identity";
+  // Month leads: with only 2 distinct accounts but 12+ months each, the
+  // month is what actually distinguishes a row. If this column has to
+  // truncate under real panel widths, it should eat the repetitive account
+  // name, not the one piece of info that changes every row.
+  identity.textContent = `${r.month} · ${r.account}`;
+  identity.title = `${r.account} · ${r.month}`;
+
+  const detail = document.createElement("div");
+  detail.className = "calc-detail";
+
+  const derivedEl = document.createElement("span");
+  derivedEl.className = "calc-money";
+  derivedEl.textContent = money(r.derived_balance);
+
+  const recordedEl = document.createElement("span");
+  recordedEl.className = r.recorded_balance == null ? "calc-money muted" : "calc-money";
+  recordedEl.textContent = money(r.recorded_balance);
+
+  const statusEl = document.createElement("span");
+  statusEl.className = "calc-status";
+  if (r.status === "off") {
+    const sign = r.diff > 0 ? "+" : "";
+    statusEl.textContent = `Off by ${sign}${r.diff.toFixed(2)}`;
+  } else {
+    statusEl.textContent = STATE_LABEL[r.status];
+  }
+
+  detail.append(derivedEl, recordedEl, statusEl);
+
+  if (r.status === "not_checked") {
+    const remedy = document.createElement("a");
+    remedy.className = "calc-remedy";
+    remedy.href = `index.html?account=${encodeURIComponent(r.account)}&month=${encodeURIComponent(r.month)}#balances-section`;
+    remedy.textContent = "Record it →";
+    detail.appendChild(remedy);
+  }
+
+  card.append(identity, detail);
+  return card;
+}
+
 async function renderCalculatorList() {
   const container = document.getElementById("calculator-list");
   const emptyEl = document.getElementById("calculator-empty");
-  const rows = await jsonFetch(`${API}/calculator`);
+  const errorEl = document.getElementById("calculator-error");
+  const summaryEl = document.getElementById("calculator-summary");
+
+  errorEl.hidden = true;
+  let rows;
+  try {
+    rows = await jsonFetch(`${API}/calculator`);
+  } catch (err) {
+    container.innerHTML = "";
+    summaryEl.textContent = "";
+    emptyEl.hidden = true;
+    errorEl.hidden = false;
+    errorEl.textContent = `Couldn't load reconciliation — ${err.message}.`;
+    return;
+  }
 
   setEmpty(emptyEl, rows.length === 0, "No account/month data to reconcile yet.");
   container.innerHTML = "";
+  summaryEl.textContent = "";
   if (rows.length === 0) return;
 
-  for (const r of rows) {
-    const card = document.createElement("div");
-    card.style.cssText =
-      "display:flex; justify-content:space-between; align-items:center; padding:0.55rem 0; border-bottom:1px solid var(--border); font-size:0.85rem;";
+  calculatorSummary(rows);
 
-    const left = document.createElement("div");
-    const accountLine = document.createElement("div");
-    accountLine.textContent = `${r.account} · ${r.month}`;
-    accountLine.style.fontWeight = "600";
-    const detailLine = document.createElement("div");
-    detailLine.className = "muted";
-    const derived = r.derived_balance != null ? r.derived_balance.toFixed(2) : "—";
-    const recorded = r.recorded_balance != null ? r.recorded_balance.toFixed(2) : "—";
-    detailLine.textContent = `derived ${derived} · recorded ${recorded}`;
-    left.append(accountLine, detailLine);
-
-    const pill = document.createElement("span");
-    if (r.match === true) {
-      pill.className = "pill ok";
-      pill.textContent = "OK";
-    } else if (r.match === false) {
-      pill.className = "pill mismatch";
-      pill.textContent = "MISMATCH";
-    } else {
-      pill.className = "pill";
-      pill.textContent = "?";
-    }
-
-    card.append(left, pill);
-    container.appendChild(card);
+  const sorted = rows.slice().sort((a, b) => STATE_ORDER[a.status] - STATE_ORDER[b.status]);
+  for (const r of sorted) {
+    container.appendChild(buildCalculatorCard(r));
   }
 }
 

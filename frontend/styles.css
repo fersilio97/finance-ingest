@@ -167,6 +167,11 @@ h3 {
   border-top: 2px solid var(--border);
   padding: var(--space-6);
   margin-bottom: var(--space-8);
+  /* Grid items default to min-width:auto, which lets content that refuses
+     to shrink (e.g. a nowrap flex row) blow the track past its container.
+     min-width:0 is the standard fix — it's what lets a panel's own content
+     (truncation, wrapping) do the shrinking instead. */
+  min-width: 0;
 }
 
 .panel:last-child {
@@ -177,6 +182,7 @@ h3 {
   background: var(--surface);
   border-top: 2px solid var(--accent);
   padding: var(--space-6);
+  min-width: 0;
 }
 
 .tile.muted-border {
@@ -194,10 +200,10 @@ h3 {
 .drop-zone {
   border: 1px dashed var(--border);
   border-radius: var(--radius);
-  padding: var(--space-4);
+  padding: var(--space-3);
   cursor: pointer;
   transition: border-color 0.15s ease, background 0.15s ease;
-  min-height: 96px;
+  min-height: 72px;
 }
 
 .drop-zone:hover {
@@ -379,6 +385,14 @@ form.inline {
   overflow-x: auto;
 }
 
+/* Rules keeps growing every time a keyword rule is saved, with no natural
+   ceiling — cap it with its own scrollbar instead of letting it dominate
+   page height (the review queue is the panel spec 002 actually measures). */
+.table-scroll--capped {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -417,6 +431,318 @@ td.truncate {
 
 tr:hover td {
   background: var(--surface-sunken);
+}
+
+/* ---------- Rules / Balances tables ----------
+   The live rules list has grown well past the ~23 rows these tables were
+   originally sized for; keep them compact so a long list doesn't dominate
+   page height the way the unpaginated review queue used to (spec 002 §F). */
+
+#rules-table td,
+#balances-table td {
+  padding: 0.25rem 0.5rem;
+}
+
+#rules-table button.ghost {
+  padding: 0.22rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+#rules-table .field-error {
+  min-height: 0;
+}
+
+/* ---------- Review queue (grouped by merchant, spec 002) ---------- */
+
+.review-table th,
+.review-table td {
+  padding: 0.22rem 0.5rem;
+  white-space: nowrap;
+}
+
+.review-table th:first-child {
+  white-space: normal;
+}
+
+.review-table select,
+.review-table input[type="text"] {
+  padding: 0.2rem 0.35rem;
+  font-size: 0.78rem;
+}
+
+.review-table td[data-cell="category"] select {
+  width: 9.5em;
+}
+
+.review-table td[data-cell="rulesource"] select {
+  width: 10em;
+}
+
+.review-table td[data-cell="keyword"] input {
+  width: 13em;
+}
+
+.review-table td[data-cell="actions"] {
+  white-space: nowrap;
+}
+
+.review-table td[data-cell="actions"] button {
+  padding: 0.22rem 0.55rem;
+  font-size: 0.75rem;
+}
+
+.review-table .field-error {
+  min-height: 0;
+  margin-top: 2px;
+}
+
+.disclosure {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 0 0.3em;
+  font-size: 0.75rem;
+  cursor: pointer;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+.disclosure:hover {
+  color: var(--accent);
+  border-color: transparent;
+}
+
+.disclosure:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.merchant-label {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-weight: 600;
+}
+
+.group-row td[data-cell="count"] {
+  font-weight: 600;
+}
+
+.variance-note {
+  font-size: 0.72rem;
+  white-space: normal;
+  margin-top: 1px;
+}
+
+.member-row td {
+  background: var(--surface-sunken);
+}
+
+.member-row td[data-cell="desc"] {
+  color: var(--text-muted);
+}
+
+.skeleton-row td {
+  padding: 0.4rem 0.5rem;
+}
+
+.preview-row td {
+  background: var(--accent-soft);
+  padding: 0.5rem 0.6rem;
+  white-space: normal;
+}
+
+.preview-line {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  min-height: 1.4em;
+}
+
+.preview-line strong {
+  font-weight: 600;
+}
+
+.preview-show {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+}
+
+.preview-match-list {
+  list-style: none;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 100%;
+}
+
+.preview-match-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.warnings {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.warning-item {
+  font-size: 0.78rem;
+  color: var(--text);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  padding: 0.3rem 0.5rem;
+  border-radius: 2px;
+}
+
+.preview-line,
+.warnings {
+  max-width: 900px;
+}
+
+/* ---------- Calculator — EOM reconciliation (spec 003) ---------- */
+
+.calc-summary {
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+}
+
+.calc-summary.positive {
+  color: var(--positive);
+}
+
+.calc-summary.negative {
+  color: var(--negative);
+}
+
+.calc-summary.muted {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.calc-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.calc-card:last-child {
+  border-bottom: none;
+}
+
+.calc-identity {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* This is the one piece of info that must never be sacrificed for the
+     numbers next to it — it's flex-shrink:1 (the default) with a floor, not
+     flex:none like .calc-detail, so it gives up space last, not first. */
+  flex: 1 1 auto;
+  min-width: 9em;
+}
+
+.calc-detail {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex: none;
+  white-space: nowrap;
+}
+
+.calc-money {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  min-width: 4.5em;
+}
+
+.calc-money.muted {
+  color: var(--text-muted);
+}
+
+.calc-status {
+  min-width: 8em;
+  text-align: right;
+  font-weight: 600;
+}
+
+/* Not-checked is deliberately neutral — never red, never a warning colour
+   (spec 003 §A.1): it means "unverified", not "wrong". */
+.calc-state-not_checked .calc-status {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.calc-state-balanced .calc-status {
+  color: var(--positive);
+}
+
+/* The only state in this panel allowed to use red (spec 003 §A.3). */
+.calc-state-off .calc-status {
+  color: var(--negative);
+}
+
+.calc-remedy {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  font-weight: 500;
+}
+
+.calc-remedy:hover {
+  border-bottom-color: var(--accent);
+}
+
+.calc-remedy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (max-width: 480px) {
+  .calc-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+
+  .calc-identity {
+    max-width: 100%;
+  }
+
+  .calc-detail {
+    width: 100%;
+    justify-content: space-between;
+    flex: none;
+    flex-wrap: wrap;
+    white-space: normal;
+    row-gap: 2px;
+  }
+
+  .calc-money {
+    min-width: 4em;
+  }
+
+  .calc-status {
+    min-width: 6em;
+  }
 }
 
 /* ---------- Status pills ---------- */

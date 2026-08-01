@@ -45,10 +45,19 @@ async def upload(source: str, files: list[UploadFile]):
 
 @router.post("/trigger")
 def trigger():
+    normalize_summary = normalize_all()
+    enrich_summary = enrich_all()
+    try:
+        export_summary = export_all()
+    except RuntimeError as e:
+        # normalize/enrich already committed to the DB — only the derived
+        # files failed, and export_all() guarantees they were left untouched
+        # (not partially updated) rather than drifting out of sync.
+        raise HTTPException(500, str(e))
     return {
-        "normalize": normalize_all(),
-        "enrich": enrich_all(),
-        "export": export_all(),
+        "normalize": normalize_summary,
+        "enrich": enrich_summary,
+        "export": export_summary,
     }
 
 
@@ -218,6 +227,18 @@ def set_manual_balance(body: ManualBalanceRequest):
             "ON CONFLICT(account, month) DO UPDATE SET balance = excluded.balance",
             (body.account, body.month, body.balance),
         )
+    return {"ok": True}
+
+
+@router.delete("/manual-balances/{balance_id}")
+def remove_manual_balance(balance_id: int):
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM manual_balances WHERE id = ?", (balance_id,)
+        ).fetchone()
+        if not existing:
+            raise HTTPException(404, "Manual balance not found")
+        conn.execute("DELETE FROM manual_balances WHERE id = ?", (balance_id,))
     return {"ok": True}
 
 

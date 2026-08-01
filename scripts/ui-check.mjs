@@ -49,6 +49,8 @@ const isIgnored = (text) => IGNORED.some((re) => re.test(text));
 // A page more than this many viewports tall is almost certainly rendering an
 // unbounded list. Generous on purpose — this should flag pathology, not length.
 const MAX_PAGE_HEIGHT_RATIO = 12;
+// Same idea for DOM size — generous, flags pathology not richness.
+const MAX_DOM_NODES = 10000;
 
 const problems = [];
 const screenshots = [];
@@ -104,12 +106,16 @@ async function checkPage(browser, page_, viewport, theme) {
     // as a number instead — that's the useful signal, and an absurd value is
     // itself a finding worth surfacing.
     const pageHeight = await page.evaluate(() => document.documentElement.scrollHeight);
-    heights.push({ label, pageHeight, viewportHeight: viewport.height });
+    const domNodes = await page.evaluate(() => document.querySelectorAll("*").length);
+    heights.push({ label, pageHeight, viewportHeight: viewport.height, domNodes });
     if (pageHeight > viewport.height * MAX_PAGE_HEIGHT_RATIO) {
       problems.push(
         `${label}: page is ${pageHeight}px tall (${Math.round(pageHeight / viewport.height)}x the viewport) — ` +
           `likely an unpaginated list`
       );
+    }
+    if (domNodes > MAX_DOM_NODES) {
+      problems.push(`${label}: ${domNodes} DOM nodes — likely rendering an unbounded list at full detail`);
     }
 
     const file = path.join(ARTIFACTS, `${page_.name}-${viewport.name}-${theme}.png`);
@@ -151,10 +157,10 @@ async function main() {
   console.log(`\nScreenshots (${screenshots.length}) in .artifacts/ — viewport-sized, open them:`);
   for (const s of screenshots) console.log(`  ${s}`);
 
-  console.log("\nPage heights:");
+  console.log("\nPage heights / DOM size:");
   for (const h of heights) {
     console.log(
-      `  ${h.label.padEnd(30)} ${String(h.pageHeight).padStart(7)}px  (${(h.pageHeight / h.viewportHeight).toFixed(1)}x viewport)`
+      `  ${h.label.padEnd(30)} ${String(h.pageHeight).padStart(7)}px  (${(h.pageHeight / h.viewportHeight).toFixed(1)}x viewport)   ${h.domNodes} DOM nodes`
     );
   }
 
