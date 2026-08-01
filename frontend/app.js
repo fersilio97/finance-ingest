@@ -217,12 +217,16 @@ function renderPendingSummary(err) {
     el.classList.add("is-error");
     return;
   }
-  const filesTotal = UPLOADS.reduce((sum, u) => sum + u.pending_aggregate.file_count, 0);
-  const sourcesWithPending = UPLOADS.filter((u) => u.pending_aggregate.file_count > 0).length;
-  el.textContent =
-    filesTotal === 0
-      ? "Nothing waiting — every uploaded file has already been processed."
-      : `${filesTotal} file${filesTotal === 1 ? "" : "s"} ready to process across ${sourcesWithPending} source${sourcesWithPending === 1 ? "" : "s"}.`;
+  const pending = UPLOADS.filter((u) => u.pending_aggregate.file_count > 0);
+  const filesTotal = pending.reduce((sum, u) => sum + u.pending_aggregate.file_count, 0);
+  if (filesTotal === 0) {
+    el.textContent = "Nothing waiting — every uploaded file has already been processed.";
+    return;
+  }
+  // Name the sources, not just a count — the user has to know *what* Run
+  // Pipeline is about to act on without scrolling back up to each drop zone.
+  const bySource = pending.map((u) => `${u.label} (${u.pending_aggregate.file_count})`).join(", ");
+  el.textContent = `${filesTotal} file${filesTotal === 1 ? "" : "s"} ready to process: ${bySource}.`;
 }
 
 function renderAllZoneUploads() {
