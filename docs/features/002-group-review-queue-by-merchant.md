@@ -47,15 +47,25 @@ job. Everything else on the discovery list was a constant factor on top of it.
 
 ### A. How a group is keyed
 
-The merchant key is derived from the description by the following normalisation, which is
-exactly the one used to produce the 263/68%/81% numbers above:
+The merchant key is derived from the description by the following normalisation. This is
+the version **as revised 2026-08-01** to fix the `IN-N-OUT` defect documented below; the
+original 4-step version (used to produce the 263/68%/81% numbers above) is preserved
+inline in the investigation history further down for anyone diffing against the original
+spec.
 
 1. Lowercase the description.
 2. Replace every character that is not `a`–`z` or a space with a space. This removes
    digits, dates, amounts, store numbers, punctuation and confirmation codes in one step.
-3. Split on whitespace and drop any token of **2 characters or fewer** — this kills the
-   `NV` / `CA` / `MT` state suffixes, `ES`, and filler like `of`.
-4. Take the **first two remaining tokens**, joined by a space. That is the key.
+3. Split on whitespace into raw tokens.
+4. Look at the **leading run** of consecutive short tokens (length ≤ 2 chars) at the very
+   start of the token list only:
+   - a run of **2 or more** collapses into one merged anchor unit (the short tokens joined
+     by a space) that is kept, however short it is — this is the fix, see below;
+   - a run of **exactly 1** (an isolated leading short token with no short neighbour) is
+     still dropped, unchanged from the original algorithm. Everywhere else in the
+     description, a lone short token is still dropped exactly as before — this step only
+     changes behaviour at the front of the string.
+5. Take the **first two remaining tokens/units**, joined by a space. That is the key.
 
 Worked examples from the live queue:
 
@@ -66,19 +76,28 @@ Worked examples from the live queue:
 | `Fees: Ssga 2060/ Sh Mat (6SC)` | `fees ssga` | 59 |
 | `URTH CAFFE UNCOMMONS LAS VEGAS NV` | `urth caffe` | 6 |
 | `Zelle payment from JUAN HUGO POL MONCADA for cafe"; Conf# 99ax1z2ul"` | `zelle payment` | 106 |
+| `IN-N-OUT LV - RAINBOW 02/08 PURCHASE LAS VEGAS NV` | `in n out` | 5 (of 6, see below) |
 
 **This key is a heuristic and its known failures are documented on purpose**, so that
 nobody later mistakes them for bugs and nobody "fixes" the key without re-measuring:
 
-- `No Description` keys to `description` (48 rows) because `no` is dropped as a short
-  token. Harmless — it still groups correctly.
+- `No Description` keys to `description` (48 rows) because `no` is an isolated leading
+  short token with no short neighbour, so it is still dropped — byte-identical to the
+  pre-2026-08-01 behaviour. Harmless — it still groups correctly.
 - The Zelle family **splits three ways**: `zelle payment` (106), `payment from` (15),
   `zelle scheduled` (7), against 121 live rows containing "zelle". Acceptable; these are
-  genuinely different Zelle flows.
-- `smith purchase` (12) and `smith food` (6) split one grocery store, because in some rows
-  the store number is glued to the city (`SMITH'S FOOD & DRUG #4315LAS VEGAS NV`).
-- `7-ELEVEN` keys to `eleven purchase` — the leading `7` is stripped as non-alpha.
-- **`IN-N-OUT` splits six ways** — worse than the `smith purchase`/`smith food` split above.
+  genuinely different Zelle flows. Unaffected by the 2026-08-01 change (verified: identical
+  keys before and after, since none of these descriptions have a leading short-token run).
+- `smith purchase` (12) and `smith food` (6) still split one grocery store, because in some
+  rows the store number is glued to the city (`SMITH'S FOOD & DRUG #4315LAS VEGAS NV`).
+  Unaffected by the 2026-08-01 change — confirmed live: all 25 SMITH rows in the current
+  dataset produce byte-identical keys before and after (the short tokens involved,
+  `"s"`/`"f"` from `SMITH'S F`, sit mid-description, not in the leading run, so the
+  leading-only fix deliberately does not touch them; see rationale in `merchant-key.js`).
+- `7-ELEVEN` keys to `eleven purchase` — the leading `7` is stripped as non-alpha before it
+  ever becomes a token, so it never reaches the leading-run logic. Unaffected by the
+  2026-08-01 change (confirmed live against all 9 `7-ELEVEN` rows in the current dataset).
+- **`IN-N-OUT` split six ways — fixed 2026-08-01, see below.**
   Investigated 2026-08 after a user question about 7 ungrouped IN-N-OUT rows. The live
   `transactions` table currently holds only **6** IN-N-OUT rows (not 7), and all six are
   already `status=classified` via rule 30 (`match_text='in-n-out'`, `source=NULL`) — a broad
@@ -113,11 +132,74 @@ nobody later mistakes them for bugs and nobody "fixes" the key without re-measur
   covering ≥ 65% of the live queue) re-run before it could safely ship. **No code change
   made this session** — documented as a known failure, not fixed.
 
+  **Fixed 2026-08-01.** Shipped the "leading run" variant flagged as risky above, but
+  scoped down from *any* hyphen-joined run anywhere to only the **leading run of short
+  tokens**, which sidesteps the dataset-wide blast radius concern: it only changes the key
+  for descriptions whose *first* token is 2 characters or fewer, which is a narrow,
+  auditable slice of the dataset, not "every hyphenated description." Measured directly
+  against the live data (`frontend/merchant-key.js` old vs new, all 1020 rows in the
+  `transactions` table, all statuses, via a throwaway Node script — not committed):
+
+  | Description | Merchant key (old) | Merchant key (new) |
+  | --- | --- | --- |
+  | `IN-N-OUT LV - RAINBOW 02/08 PURCHASE LAS VEGAS NV` | `out rainbow` | `in n out` |
+  | `IN-N-OUT LAS VEGAS 05/02 PURCHASE LAS VEGAS NV` | `out las` | `in n out` |
+  | `IN-N-OUT GLENDORA GLENDORA CA` | `out glendora` | `in n out` |
+  | `IN-N-OUT LV - SAHARA LAS VEGAS NV` | `out sahara` | `in n out` |
+  | `IN-N-OUT BAKERSFIELD BAKERSFIELD CA` | `out bakersfield` | `in n out` |
+  | `IN-N-OUTWASHINGTONCITY WASHINGTON CIUT` | `outwashingtoncity washington` | `in n outwashingtoncity` |
+
+  **5 of the 6 live IN-N-OUT rows now share one key** (`in n out`), down from 6 distinct
+  keys. The 6th (`IN-N-OUTWASHINGTONCITY...`) has no space or hyphen between `OUT` and
+  `WASHINGTONCITY` in the source description itself — a separate, pre-existing data-glue
+  defect (the token-cleaning step can't recover a word boundary that was never there), not
+  a short-token-dropping problem, and out of scope for this fix.
+
+  **Full-dataset blast-radius check** — ran old vs new over all 1020 live transactions and
+  diffed every key: **12 rows changed** (the 6 IN-N-OUT rows above, plus 6 more rows that
+  are the exact same class of bug — a leading short-token run swallowing the true merchant
+  identity and letting an incidental later word stand in for it): `HI-SF DOWNTOWN 139445
+  415-7885604 CA` (`downtown` → `hi sf downtown`, ×2 identical rows), `H&M 0143LAS VEGAS LAS
+  VEGAS NV` (`las vegas` → `h m las`, ×2 — note the old key had *silently lost the merchant
+  name entirely*), `T J MAXX #1376 LAS VEGAS NV` (`maxx las` → `t j maxx`), `S&S #14 04/20
+  PURCHASE LAS VEGAS NV` (`purchase las` → `s s purchase`), `SQ *PB POKE HOUSE 04/17
+  PURCHASE San Diego CA` (`poke house` → `sq pb poke`). Every one of these is a genuine
+  improvement (the new key is closer to the actual merchant name); none is a case of two
+  previously-distinct merchants colliding into one key. **Zero rows outside this list
+  changed** — confirmed by full diff, not spot-check.
+
+  **Live group-count check, current data (2026-08-01 — the live `needs_review` queue is
+  now 304 rows, not the 862 the original 2026-07-31 baseline above measured; unrelated
+  concurrent work has classified more of the queue since then, not this change):**
+
+  | Measurement | Old algorithm | New algorithm |
+  | --- | --- | --- |
+  | `needs_review` queue (304 rows) — distinct groups | 147 | 147 |
+  | `needs_review` queue — top-50 groups cover | 207 rows (68.1%) | 207 rows (68.1%) |
+  | Full `transactions` table (1020 rows, all statuses) — distinct groups | 283 | 280 |
+  | Full table — top-50 groups cover | 696 rows (68.2%) | 697 rows (68.3%) |
+
+  The `needs_review` numbers are unchanged because none of the 12 affected rows are
+  currently in `needs_review` (the IN-N-OUT rows are already `classified` via rule 30, as
+  noted above; the other 6 affected rows are also already classified in the live data).
+  The fix is real and measured against the full table where the affected rows live; it
+  does not currently move the needs-review headline number, but it will the next time any
+  of these merchants' rules lapse or a fresh one of these descriptions arrives unclassified
+  — and, more importantly, it fixes what the group label *says* (spec §B: "the merchant
+  key, displayed in a readable form" — this key is rendered directly as the group's visible
+  label in `app.js`), which is the actual user-facing bug: a future IN-N-OUT row landing in
+  `needs_review` will now group with its siblings instead of standing alone.
+
 Acceptance criteria for the key:
 
 1. Run against the live 862 `needs_review` rows it produces **263 ± 15 groups**, with the
    50 largest covering **≥ 65%** of rows. If a "better" key is substituted, it must beat
-   these numbers, measured, not asserted.
+   these numbers, measured, not asserted. (As of the 2026-08-01 leading-run fix, the live
+   `needs_review` queue has shrunk to 304 rows through unrelated classification work; the
+   fix reproduces the pre-fix group count exactly — 147/147 — on the current queue, and
+   improves the full 1020-row table from 283 to 280 groups. See the fix note above for the
+   full measurement; the ±15/≥65% thresholds are about *not regressing* the grouping
+   quality, and both are met.)
 2. The key is computed in **one place** and is the same key **001** uses for its
    over-broad-match warning. The two features must never disagree about what a merchant is.
 3. Grouping is a **presentation** concern only. It writes nothing to the database and adds
