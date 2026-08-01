@@ -63,7 +63,12 @@ body {
 }
 
 .page {
-  max-width: 1180px;
+  /* Floor (1180px) matches the old fixed value and is what this resolves to
+     below ~1283px viewport width, so the 860px/480px narrow breakpoints are
+     untouched. Above that, grows with the viewport (92vw) up to a 1680px
+     ceiling that keeps line length/form rows readable on ultra-wide screens
+     while giving .table-scroll panels materially more room. See feature 011. */
+  max-width: clamp(1180px, 92vw, 1680px);
   margin: 0 auto;
   padding: var(--space-8) var(--space-6) var(--space-12);
 }
@@ -983,6 +988,16 @@ button.cell-link:disabled {
   margin-bottom: var(--space-2);
   font-weight: 600;
   font-size: 0.85rem;
+  /* Feature 011: a block-level flex box with no width set defaults to filling
+     its containing block — here the drill-down row's colspan=24 <td>, ~1800px
+     wide. That silently defeated the visibility fix (scrollIntoView on an
+     element as wide as the table it's meant to be visible within is a
+     no-op-by-construction) and, independently, meant the Close button already
+     rendered far outside the visible scroll window in the *unscrolled*
+     default case too. Sizing to content keeps title + Close together near
+     the clicked cell instead of stretched across the full table width. */
+  width: fit-content;
+  max-width: 100%;
 }
 
 /* The drill-down row's <td> has colSpan = every column in the (very wide,

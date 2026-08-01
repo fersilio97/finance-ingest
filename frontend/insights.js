@@ -174,6 +174,7 @@ async function toggleDrilldown(rowEl, category, month, colspan, triggerBtn) {
   openDrilldown = { rowEl, category, month };
 
   renderDrilldownLoading(dTd, category, month);
+  ensureDrilldownHeaderVisible(dTd);
   triggerBtn.disabled = true;
   try {
     const txns = await jsonFetch(`/api/transactions?category=${encodeURIComponent(category)}&month=${encodeURIComponent(month)}`);
@@ -182,14 +183,38 @@ async function toggleDrilldown(rowEl, category, month, colspan, triggerBtn) {
     // still the one this response belongs to.
     if (openDrilldown && openDrilldown.rowEl === rowEl && openDrilldown.category === category && openDrilldown.month === month) {
       renderDrilldownContent(dTd, category, month, txns);
+      ensureDrilldownHeaderVisible(dTd);
     }
   } catch (err) {
     if (openDrilldown && openDrilldown.rowEl === rowEl && openDrilldown.category === category && openDrilldown.month === month) {
       renderDrilldownError(dTd, category, month, err);
+      ensureDrilldownHeaderVisible(dTd);
     }
   } finally {
     triggerBtn.disabled = false;
   }
+}
+
+// Feature 011: the drill-down <td> spans all 24 columns, so its own bounding
+// rect always overlaps part of .table-scroll's visible window at any
+// scrollLeft — checking/scrolling based on the <td> would silently no-op.
+// Target .drilldown-header instead (the first child in all three render
+// states, positioned at the <td>'s left edge with its own natural width).
+// header.closest(".table-scroll") — not the nested transaction-table's own
+// .table-scroll wrapper appended later in renderDrilldownContent, which is a
+// sibling, not an ancestor, of the header — resolves to the outer
+// category-table scroll container that actually needs scrolling.
+// scrollIntoView({ inline: "nearest" }) natively no-ops when the header is
+// already fully visible, satisfying "no unnecessary scroll jump" without
+// hand-rolled geometry math, and handles a column scrolled off-screen either
+// left or right uniformly.
+// Known limitation (accepted per spec): this is an open-time-only check — a
+// window resize while a panel is open does not re-run it.
+function ensureDrilldownHeaderVisible(dTd) {
+  const header = dTd.querySelector(".drilldown-header");
+  const scrollEl = header?.closest(".table-scroll");
+  if (!header || !scrollEl) return;
+  header.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 
 function renderDrilldownHeader(container, category, month, countText) {
