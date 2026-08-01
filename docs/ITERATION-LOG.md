@@ -124,3 +124,93 @@ since 002's volume claims needed it.
   sufficient to check most of what mattered in this iteration, including the single most
   important acceptance test (001's cafe-rule warning). Worth defaulting to this pattern
   before reaching for a mutating test.
+
+---
+
+## Iteration 2 — direct feedback, not a fresh discovery pass
+
+**Started:** 2026-08-01 (continuing from iteration 1's baseline: 23 rules, 1020
+transactions, 862 needs_review, 0 manual balances).
+
+Unlike iteration 1, this round did not start with `fintech-ux-lead` exploring the app
+cold — the user reviewed the running app directly and gave feedback across six areas:
+upload visibility, pipeline clarity, needs-review grouping (specifically "why didn't
+IN-N-OUT group?"), the rules table's "(Any source)" label, exact-timestamp balance
+entries, and the insights page (balance trend, category table, reconciliation). The loop
+still ran discover→design→build→verify→document per feature, just gated by direct user
+critique instead of a ranked UX proposal.
+
+### Shipped
+
+Seven sessions, spanning backend (`uploads` table, `balance_entries` table replacing
+`manual_balances`, reshaped `/api/insights/balance-trend`, `category`/`month` filters on
+`GET /api/transactions`) and frontend (drop-zone stats/staleness, exact-datetime balance
+entry UI, per-entry dynamic reconciliation, a full balance-trend chart rework with
+time-based axes and a hover tooltip, sortable+drill-down category table, an
+account-balance strip) — features 004–009, all in `docs/features/`. Two smaller follow-up
+sessions closed out the remaining direct-feedback gaps: naming which sources/files are
+pending next to the Run Pipeline button, and fixing `merchantKey()` so leading short-token
+brand names (IN-N-OUT: 6 keys → 2; five more cases fixed the same way across the dataset)
+group correctly instead of being silently dropped.
+
+One item was investigated and explicitly deferred rather than fixed: the residual
+IN-N-OUT row with no separator between "OUT" and "WASHINGTONCITY" in its raw description
+is a data-glue defect, not a short-token problem — out of scope for the merchant-key fix.
+
+### Incident (near-miss, self-caught): uncommitted work across seven sessions
+
+**None of this iteration's work was committed to git until the very end.** Sessions 1–7
+ran sequentially/in parallel across a long working session, all landing as uncommitted
+working-tree changes — by the time the checkpoint commit finally happened, it was ~1,900
+lines across 12 files. Mid-iteration, the coordinator (this session) entered plan mode to
+address a new round of user feedback, which interrupted Session 7's `fintech-frontend`
+agent mid-verification — structurally the same risk iteration 1's incident called out
+(an agent cut off before reaching a clean stopping point), except this time the agent
+**detected plan mode itself and stopped cleanly**, writing a handoff plan describing
+exactly what was done and what remained, rather than requiring the coordinator's
+rule-count check to catch a bad state after the fact. Nothing was lost, but it was closer
+to a real loss than it should have been: seven sessions of work had no checkpoint at all
+until the coordinator committed it as the first action of the next session, purely by
+habit rather than by any enforced process step.
+
+**Process change for iteration 3:** checkpoint-commit after each session (or every 2–3),
+not only at iteration boundaries. A commit is cheap and reversible; hours of uncommitted
+agent work sitting in the working tree is not.
+
+### Note: baseline drift during the session was real user activity, not an agent bug
+
+Partway through, `rules` count moved 108 → 109 → 112 and `needs_review` dropped
+315 → 304 while three agents were working. Every agent's own report claimed zero
+mutations, which — per iteration 1's incident — is exactly the situation that deserves
+verification, not trust. Checking the actual new rule rows (not just the count) showed
+plausible, human-created category rules (`oakley.com` → Clothes, `nv energy` → Housing,
+`transaction fee` → Banking, `spirit airl` → Trips) created at real, spaced-out
+timestamps — the user was working the review queue live in a browser tab while the
+agents ran. **Lesson:** don't stop at "did the count change" — read what actually
+changed before concluding either "fine" or "incident." A single-user app being actively
+used during a long agent session is expected, not a bug, but it looks identical to a
+mutation incident from the count alone.
+
+### Also noticed: an unexplained iteration-3 feature doc appeared mid-session
+
+`docs/features/010-upload-duplicate-feedback-and-file-management.md` (Status: Approved,
+Iteration 3) appeared in the working tree partway through this session, written in
+`fintech-ux-lead`'s voice and citing live data timestamped later than this session's own
+checkpoint commit. None of this session's three agents (all `fintech-frontend`, scoped
+away from writing new specs) produced it. Left untouched and uncommitted — most likely
+a concurrent, independent session already working iteration 3's discovery pass. Flagged
+to the user rather than assumed.
+
+### Learned
+
+- Direct user feedback is a fine substitute for a `fintech-ux-lead` discovery pass when
+  the user has actually used the app — it's still grounded in real observation, just the
+  user's instead of the UX lead's. The loop's later stages (design/build/verify/document)
+  don't care which one triggered them.
+- A resumed agent with full prior context (via `SendMessage` to its existing session)
+  finished its own remaining checklist correctly without re-deriving anything — cheaper
+  and safer than restarting fresh, and it's what let Session 7's handoff plan pay off
+  immediately instead of becoming stale.
+- Scoping concurrent sessions to disjoint files (Session 7 to `insights.*`, pipeline
+  clarity to `app.js`, merchant-key fix to `merchant-key.js` alone) avoided any merge
+  conflict between three agents running in parallel against the same working tree.
