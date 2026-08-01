@@ -905,7 +905,16 @@ button.cell-link:disabled {
   text-decoration: none;
 }
 
-.drilldown-row td {
+/* Child combinator, not a descendant selector, on purpose: `.drilldown-row
+   td` (any descendant) would also match the nested .drilldown-table's own
+   <td> cells several levels down, and its `white-space: normal` would tie
+   in specificity with td.truncate's `white-space: nowrap` (both 0,1,1) and
+   win by cascade order — silently turning the description column's
+   ellipsis truncation into multi-line wrapping instead. Found live via a
+   narrow-viewport screenshot: the description wrapped across 2 lines with
+   no "…" rather than truncating. `>` scopes this to only the outer
+   colSpan'd wrapper cell. */
+.drilldown-row > td {
   background: var(--accent-soft);
   padding: var(--space-3) var(--space-4);
   white-space: normal;
