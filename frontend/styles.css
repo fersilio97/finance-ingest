@@ -304,26 +304,81 @@ h3 {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 6px;
+  /* Spec 010 part B/C "1000+ rows": scroll within a constrained height
+     rather than pushing the drop-zone card's height without bound. Applied
+     unconditionally, but tall enough that the real live evidence data (3
+     BoA Checking files, 2 with a multi-line duplicate note) renders fully
+     with no scroll needed — this must cap runaway growth, not clip today's
+     ordinary case; only long lists (tens of files) actually hit the cap. */
+  max-height: 480px;
+  overflow-y: auto;
 }
 
 .upload-record {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  gap: 1px;
+}
+
+.upload-record-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Spec 010 part C: the persisted list itself is the "safely uploaded"
+   signal now — every row here is, by definition, a row the server has
+   confirmed, so it always carries the same --positive treatment the
+   in-session .status-dot gave only during the active upload. Unlike
+   .file-list's dot, this one never resets on refresh because it's driven
+   by GET /api/uploads, not session-only state. */
+.upload-status-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--positive);
 }
 
 .upload-name {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 100%;
+}
+
+.upload-remove-btn {
+  flex: none;
+  margin-left: auto;
+  padding: 2px 8px;
+  font-size: 0.72rem;
+  font-weight: 500;
 }
 
 .upload-meta {
   color: var(--text-muted);
+  padding-left: 13px; /* aligns under .upload-name, past the status dot */
+}
+
+/* Advisory, not alarm — same visual language as .zone-gap-warning/
+   .warning-item (accent, not red): a heads-up, not a confirmed error. */
+.upload-duplicate-note {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 2px 6px;
+  border-radius: 2px;
+  margin-left: 13px;
+}
+
+.upload-record .field-error {
+  margin-top: 0;
 }
 
 .zone-coverage {

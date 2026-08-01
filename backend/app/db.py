@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS uploads (
     row_count INTEGER,
     date_start TEXT,
     date_end TEXT,
-    processed_at TEXT
+    processed_at TEXT,
+    content_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS balance_entries (
@@ -166,6 +167,7 @@ def init_db():
         conn.executescript(SCHEMA)
         _ensure_column(conn, "transactions", "original_id", "TEXT")
         _ensure_column(conn, "transactions", "batch_id", "INTEGER")
+        _ensure_column(conn, "uploads", "content_hash", "TEXT")
         _backfill_batch_ids(conn)
         _migrate_manual_balances_to_entries(conn)
         for key, label, account, has_balance in SOURCES:

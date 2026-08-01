@@ -1,3 +1,4 @@
+import hashlib
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -11,7 +12,7 @@ from ..db import SOURCES, get_conn
 from ..parsers import PARSERS
 from ..pipeline.enrich import enrich_all, enrich_last_batch
 from ..pipeline.export import ACCOUNTS_XLSX, TRANSACTIONS_CSV, export_all
-from ..pipeline.ingest import save_upload
+from ..pipeline.ingest import INCOMING_DIR, save_upload
 from ..pipeline.normalize import ACCOUNTS, normalize_all
 from ..rules import store as rules_store
 
@@ -45,6 +46,7 @@ async def upload(source: str, files: list[UploadFile]):
             content = await f.read()
             path = save_upload(source, f.filename, content)
             saved.append(str(path))
+            content_hash = hashlib.sha256(content).hexdigest()
 
             # Read-only stats pass, purely for the uploads table — the
             # parser doesn't touch the DB itself, so calling it here (ahead
@@ -62,11 +64,27 @@ async def upload(source: str, files: list[UploadFile]):
                 pass
 
             conn.execute(
-                "INSERT INTO uploads (source, filename, row_count, date_start, date_end) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (source, f.filename, row_count, date_start, date_end),
+                "INSERT INTO uploads (source, filename, row_count, date_start, date_end, content_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (source, f.filename, row_count, date_start, date_end, content_hash),
             )
     return {"saved": saved}
+
+
+def _backfill_pending_hash(conn, row: dict) -> Optional[str]:
+    """Rows created before content_hash existed have it NULL. Best-effort
+    recovery: hash whatever's currently sitting at the filename-keyed path
+    save_upload() writes to. Only correct if this row's upload is still the
+    most recent write to that path (true for the live evidence this feature
+    was written against — three same-named boa_checking uploads with
+    identical stats), and fails safe (stays NULL, excluded from duplicate
+    comparison) rather than guessing when the file is missing."""
+    path = INCOMING_DIR / row["source"] / row["filename"]
+    if not path.exists():
+        return None
+    content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    conn.execute("UPDATE uploads SET content_hash = ? WHERE id = ?", (content_hash, row["id"]))
+    return content_hash
 
 
 @router.get("/uploads")
@@ -82,11 +100,30 @@ def list_uploads():
             key, label = source_row["key"], source_row["label"]
 
             pending_rows = conn.execute(
-                "SELECT id, filename, uploaded_at, row_count, date_start, date_end "
+                "SELECT id, source, filename, uploaded_at, row_count, date_start, date_end, content_hash "
                 "FROM uploads WHERE source = ? AND processed_at IS NULL ORDER BY uploaded_at",
                 (key,),
             ).fetchall()
             pending_files = [dict(r) for r in pending_rows]
+
+            # Duplicate detection, part A: scoped to this source's pending
+            # list only (never cross-source, never against ingested
+            # history, per spec). Earliest upload with a given hash "wins"
+            # (duplicate_of stays null on it); every later same-hash entry
+            # points back at it, never at each other.
+            seen_by_hash: dict[str, dict] = {}
+            for f in pending_files:
+                content_hash = f.pop("content_hash")
+                if content_hash is None:
+                    content_hash = _backfill_pending_hash(conn, f)
+                f.pop("source")  # only needed for the backfill lookup above; not part of the response shape
+                earliest = seen_by_hash.get(content_hash) if content_hash else None
+                if earliest is None:
+                    f["duplicate_of"] = None
+                    if content_hash:
+                        seen_by_hash[content_hash] = f
+                else:
+                    f["duplicate_of"] = {"id": earliest["id"], "uploaded_at": earliest["uploaded_at"]}
 
             row_counts = [f["row_count"] for f in pending_files if f["row_count"] is not None]
             starts = [f["date_start"] for f in pending_files if f["date_start"]]
@@ -96,6 +133,7 @@ def list_uploads():
                 "row_count": sum(row_counts) if row_counts else None,
                 "date_start": min(starts) if starts else None,
                 "date_end": max(ends) if ends else None,
+                "duplicate_count": sum(1 for f in pending_files if f["duplicate_of"] is not None),
             }
 
             coverage_row = conn.execute(
@@ -129,6 +167,37 @@ def list_uploads():
                 }
             )
         return result
+
+
+@router.delete("/uploads/{upload_id}")
+def remove_upload(upload_id: int):
+    """Remove a not-yet-processed upload. Lower-stakes than anything touching
+    `transactions`: processed_at IS NULL means this row's content was never
+    parsed into the source of truth, so nothing but a pending-list entry and
+    (conditionally) a scratch file under data/incoming/ is at stake."""
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM uploads WHERE id = ?", (upload_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Upload not found")
+        if row["processed_at"] is not None:
+            raise HTTPException(400, "Upload has already been processed and can't be removed")
+
+        conn.execute("DELETE FROM uploads WHERE id = ?", (upload_id,))
+
+        # save_upload() stores by filename only (data/incoming/<source>/<filename>),
+        # so two pending rows can share one physical file (confirmed live: three
+        # boa_checking rows, one file on disk). Only unlink it once no other
+        # pending row still references that filename — otherwise a sibling
+        # duplicate's eventual Run Pipeline would silently parse nothing.
+        remaining = conn.execute(
+            "SELECT COUNT(*) AS n FROM uploads WHERE source = ? AND filename = ? AND processed_at IS NULL",
+            (row["source"], row["filename"]),
+        ).fetchone()["n"]
+        if remaining == 0:
+            path = INCOMING_DIR / row["source"] / row["filename"]
+            if path.exists():
+                path.unlink()
+    return {"ok": True}
 
 
 @router.post("/trigger")

@@ -173,6 +173,7 @@ async function uploadFiles(sourceKey, fileList) {
   // survives a reload, so refresh it every time — success or failure,
   // since a failed request may still have partially saved files server-side.
   await loadUploads();
+  reconcileZoneFiles(sourceKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,48 @@ function laterDate(a, b) {
 function formatDateRange(start, end) {
   if (!start || !end) return "date range unknown";
   return start === end ? start : `${start} → ${end}`;
+}
+
+// "12 minutes ago" beats a raw timestamp for a duplicate-of note (spec 010
+// part A) — the point is "you just did this," not an audit trail. Server
+// timestamps come back as "YYYY-MM-DD HH:MM:SS" (space, not "T"); normalize
+// before parsing so Date() treats it as local time consistently.
+function formatRelativeTime(serverTimestamp) {
+  const then = new Date(serverTimestamp.replace(" ", "T"));
+  if (Number.isNaN(then.getTime())) return "recently";
+  const diffMs = Date.now() - then.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin} minute${diffMin === 1 ? "" : "s"} ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr} hour${diffHr === 1 ? "" : "s"} ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay === 1) return "yesterday";
+  if (diffDay < 30) return `${diffDay} days ago`;
+  const diffMonth = Math.round(diffDay / 30);
+  if (diffMonth < 12) return `${diffMonth} month${diffMonth === 1 ? "" : "s"} ago`;
+  const diffYear = Math.round(diffMonth / 12);
+  return `${diffYear} year${diffYear === 1 ? "" : "s"} ago`;
+}
+
+// Hands the in-session "just uploaded" list (zoneFiles, ephemeral, spec 007's
+// pre-existing .file-list dot) off to the persisted signal (spec 010 part C)
+// the moment GET /api/uploads confirms a same-named row exists — otherwise,
+// for the rest of the session, the same fact would be shown twice (an
+// ephemeral green dot in .file-list *and* the persisted .zone-uploads row),
+// which is exactly the "two signals that could disagree" part C calls out.
+// Only drops entries already marked "done"; "pending"/"failed" stay, since
+// those aren't confirmed by the server yet (or never will be).
+function reconcileZoneFiles(sourceKey) {
+  const files = zoneFiles[sourceKey];
+  if (!files || files.length === 0) return;
+  const entry = UPLOADS ? UPLOADS.find((u) => u.source === sourceKey) : null;
+  const persistedNames = new Set(entry ? entry.pending_files.map((f) => f.filename) : []);
+  const next = files.filter((f) => !(f.status === "done" && persistedNames.has(f.name)));
+  if (next.length !== files.length) {
+    zoneFiles[sourceKey] = next;
+    renderFileList(sourceKey);
+  }
 }
 
 async function loadUploads() {
@@ -225,7 +268,16 @@ function renderPendingSummary(err) {
   }
   // Name the sources, not just a count — the user has to know *what* Run
   // Pipeline is about to act on without scrolling back up to each drop zone.
-  const bySource = pending.map((u) => `${u.label} (${u.pending_aggregate.file_count})`).join(", ");
+  // Spec 010 part A: fold the duplicate signal into this same sentence too,
+  // so it's visible without scrolling down into any one zone — e.g.
+  // "BoA Checking (3, 2 look like duplicates)".
+  const bySource = pending
+    .map((u) => {
+      const dup = u.pending_aggregate.duplicate_count || 0;
+      const dupPart = dup > 0 ? `, ${dup} look${dup === 1 ? "s" : ""} like ${dup === 1 ? "a duplicate" : "duplicates"}` : "";
+      return `${u.label} (${u.pending_aggregate.file_count}${dupPart})`;
+    })
+    .join(", ");
   el.textContent = `${filesTotal} file${filesTotal === 1 ? "" : "s"} ready to process: ${bySource}.`;
 }
 
@@ -266,15 +318,79 @@ function renderZoneUploads(sourceKey) {
     for (const f of pending_files) {
       const li = document.createElement("li");
       li.className = "upload-record";
+
+      const row = document.createElement("div");
+      row.className = "upload-record-row";
+      // Spec 010 part C — every row in the persisted list is, by
+      // definition, safely on the server, so it always carries the
+      // --positive "done" dot (unlike the in-session .file-list dot,
+      // this one is driven by GET /api/uploads and survives a refresh).
+      const dot = document.createElement("span");
+      dot.className = "upload-status-dot";
       const nameEl = document.createElement("span");
       nameEl.className = "upload-name truncate";
       nameEl.textContent = f.filename;
       nameEl.title = f.filename;
+      row.append(dot, nameEl);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "ghost upload-remove-btn";
+      removeBtn.textContent = "Remove";
+      removeBtn.title = `Remove ${f.filename} — it hasn't been processed yet`;
+      row.appendChild(removeBtn);
+
       const metaEl = document.createElement("span");
       metaEl.className = "upload-meta";
       const rows = f.row_count == null ? "rows unknown" : `${f.row_count} row${f.row_count === 1 ? "" : "s"}`;
       metaEl.textContent = `${rows} · ${formatDateRange(f.date_start, f.date_end)}`;
-      li.append(nameEl, metaEl);
+
+      li.append(row, metaEl);
+
+      // Spec 010 part A: no note at all for the common case (not a
+      // duplicate) — zero visual noise. Only the earliest match is named,
+      // never every copy (matches the "duplicate detected across more than
+      // 2 copies" edge case).
+      if (f.duplicate_of) {
+        const noteEl = document.createElement("div");
+        noteEl.className = "upload-duplicate-note";
+        noteEl.textContent =
+          `Matches a file already pending, uploaded ${formatRelativeTime(f.duplicate_of.uploaded_at)} — ` +
+          `running the pipeline won't add anything new from this copy.`;
+        li.appendChild(noteEl);
+      }
+
+      const rowErrorEl = document.createElement("div");
+      rowErrorEl.className = "field-error";
+      li.appendChild(rowErrorEl);
+
+      removeBtn.addEventListener("click", async (e) => {
+        // Bug fix (010, reopened 2026-08-01): this button lives inside the
+        // same `zone` element that has a click-to-browse handler
+        // (`input.click()` at the top of `renderDropZones()`). Without this,
+        // every click here bubbles up and also opens the OS file picker.
+        // Scoped to this button, not the whole `.zone-uploads` container,
+        // because nothing else in that container is interactive — the dot,
+        // filename, meta line, and duplicate note are inert text, and
+        // letting clicks on them fall through to click-to-browse is existing,
+        // unreported behavior consistent with the rest of the drop zone.
+        e.stopPropagation();
+        removeBtn.disabled = true;
+        removeBtn.textContent = "Removing…";
+        rowErrorEl.textContent = "";
+        try {
+          await jsonFetch(`${API}/uploads/${f.id}`, { method: "DELETE" });
+          // Recomputes pending_aggregate, #pending-summary, and any sibling
+          // duplicate_of notes that pointed at this row — all server-side,
+          // via the same refresh pattern used everywhere else in this file.
+          await loadUploads();
+        } catch (err) {
+          rowErrorEl.textContent = err.message;
+          removeBtn.disabled = false;
+          removeBtn.textContent = "Remove";
+        }
+      });
+
       ul.appendChild(li);
     }
     el.appendChild(ul);

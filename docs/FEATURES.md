@@ -15,7 +15,7 @@ engineer writes the verification evidence.
 | [007](features/007-upload-visibility-pipeline-clarity.md) | Upload visibility and pipeline clarity (frontend) | Shipped | 2 |
 | [008](features/008-eom-balances-reconciliation-ui.md) | Balance-entry UI (datetime, dropdown, delete) and per-entry reconciliation panel (frontend) | Shipped | 2 |
 | [009](features/009-balance-trend-chart-category-drilldown.md) | Balance trend chart rework (time-based axes, 6+1 lines, entry markers, tooltip), sortable category table + transaction drill-down, account-balance strip (frontend) | Shipped | 2 |
-| [010](features/010-upload-duplicate-feedback-and-file-management.md) | Upload duplicate feedback and pending-file management (delete pending file, refresh-proof "loaded" indicator) | Approved | 3 |
+| [010](features/010-upload-duplicate-feedback-and-file-management.md) | Upload duplicate feedback and pending-file management (delete pending file, refresh-proof "loaded" indicator) | Shipped | 3 |
 
 **Status values:** Proposed · Approved · In progress · Shipped · Rejected
 
