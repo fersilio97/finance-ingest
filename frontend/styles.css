@@ -278,6 +278,78 @@ h3 {
   50% { opacity: 0.35; }
 }
 
+/* ---------- Zone uploads — persisted upload visibility (spec 007) ---------- */
+
+.zone-uploads {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  font-size: 0.74rem;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.zone-uploads-empty {
+  color: var(--text-muted);
+}
+
+.zone-uploads-error {
+  color: var(--negative);
+}
+
+.upload-record-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.upload-record {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.upload-name {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.upload-meta {
+  color: var(--text-muted);
+}
+
+.zone-coverage {
+  color: var(--text);
+}
+
+.zone-coverage.muted {
+  color: var(--text-muted);
+}
+
+/* Advisory, not alarm — same visual language as .warning-item (accent, not
+   red). A stale source is worth noticing, not a MISMATCH-style hard error;
+   red stays reserved for genuine differences elsewhere in the app. */
+.zone-gap-warning {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: 2px 6px;
+  border-radius: 2px;
+  margin-top: 1px;
+}
+
+.status-line.is-error {
+  color: var(--negative);
+}
+
 /* ---------- Buttons & form controls ---------- */
 
 button,
@@ -443,12 +515,14 @@ tr:hover td {
   padding: 0.25rem 0.5rem;
 }
 
-#rules-table button.ghost {
+#rules-table button.ghost,
+#balances-table button.ghost {
   padding: 0.22rem 0.5rem;
   font-size: 0.75rem;
 }
 
-#rules-table .field-error {
+#rules-table .field-error,
+#balances-table .field-error {
   min-height: 0;
 }
 
@@ -610,6 +684,281 @@ tr:hover td {
 .preview-line,
 .warnings {
   max-width: 900px;
+}
+
+/* ---------- Balance trend chart (spec 006 backend / 009 frontend) ----------
+   Responsive canvas: the backing pixel buffer is sized in JS from the
+   container's rendered width (insights.js:sizeCanvas), not a hardcoded HTML
+   width/height attribute, so it no longer clips at the 480px viewport. */
+
+.chart-wrap {
+  position: relative;
+}
+
+#balance-chart {
+  display: block;
+  width: 100%;
+  height: 300px;
+  touch-action: none; /* keeps pointermove hover working without page-scroll interference */
+}
+
+/* [hidden] alone loses to an author `display` declaration of equal
+   specificity when the author rule is later in the cascade — the classic
+   "display:flex/grid element won't actually hide" trap. Both toggled grid/
+   flex containers below need an explicit [hidden] override to actually
+   disappear; found live via screenshot (the loading skeleton kept rendering
+   underneath the real content after the fetch resolved). */
+.chart-legend[hidden],
+.balance-strip[hidden] {
+  display: none;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  margin-top: var(--space-3);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 3px solid var(--text-muted);
+}
+
+/* Dashed = kind:"derived" (relative running total), matching the chart's own
+   dash pattern for that account so the legend and the drawn line agree. */
+.legend-swatch.dashed {
+  border-top-style: dashed;
+}
+
+.legend-swatch.aggregated {
+  border-top-width: 4px;
+  border-top-style: dotted;
+}
+
+.chart-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.75rem;
+  max-width: 240px;
+  z-index: 5;
+}
+
+.chart-tooltip-date {
+  font-weight: 600;
+  margin-bottom: 3px;
+  color: var(--text);
+}
+
+.chart-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.chart-tooltip-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.chart-tooltip-entry {
+  color: var(--accent);
+  margin-top: 3px;
+  white-space: normal;
+}
+
+/* ---------- Account balance strip (spec 009, above the category table) ---------- */
+
+.balance-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.balance-tile {
+  padding: var(--space-3) var(--space-4);
+  min-width: 0;
+}
+
+.balance-tile-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.balance-tile-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.balance-tile-value.muted {
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 0.85rem;
+}
+
+.balance-tile-kind {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 3px;
+}
+
+/* ---------- Sortable category table + drill-down (spec 009) ---------- */
+
+.th-sort {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+th.num .th-sort {
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.th-sort:hover {
+  color: var(--accent);
+}
+
+.th-sort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.th-sort:active {
+  transform: scale(0.97);
+}
+
+.sort-arrow {
+  color: var(--accent);
+  font-size: 0.6rem;
+}
+
+button.cell-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  width: 100%;
+  text-align: right;
+}
+
+button.cell-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+button.cell-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+button.cell-link:active {
+  transform: scale(0.98);
+}
+
+button.cell-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.drilldown-row td {
+  background: var(--accent-soft);
+  padding: var(--space-3) var(--space-4);
+  white-space: normal;
+}
+
+.drilldown-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+/* The drill-down row's <td> has colSpan = every column in the (very wide,
+   24-column) category table, so its rendered width is ~1800px — the generic
+   `table { width: 100% }` rule would otherwise stretch this small 4-column
+   table to fill all of that, which also defeats .truncate's max-width (a
+   cell can't visually clip at 280px if the table's own auto-layout has
+   already inflated the column past it to fill 100%). Fixed layout + a
+   deliberately compact width keeps this panel readable regardless of how
+   wide the outer table happens to be. Found live via screenshot — the
+   Description column initially rendered ~890px wide, untruncated. */
+.drilldown-table {
+  width: auto;
+  max-width: 720px;
+  table-layout: fixed;
+  font-size: 0.8rem;
+}
+
+.drilldown-table th {
+  background: transparent;
+}
+
+.drilldown-table th:nth-child(1),
+.drilldown-table td:nth-child(1) {
+  width: 90px;
+}
+
+.drilldown-table th:nth-child(2),
+.drilldown-table td:nth-child(2) {
+  width: 320px;
+}
+
+.drilldown-table th:nth-child(3),
+.drilldown-table td:nth-child(3) {
+  width: 140px;
+}
+
+.drilldown-table th:nth-child(4),
+.drilldown-table td:nth-child(4) {
+  width: 90px;
 }
 
 /* ---------- Calculator — EOM reconciliation (spec 003) ---------- */

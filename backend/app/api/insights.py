@@ -5,7 +5,14 @@ disagree."""
 from fastapi import APIRouter
 
 from ..db import get_conn
-from ..pipeline.export import build_calculator, build_global, load_manual_balances, load_transactions
+from ..pipeline.export import (
+    build_balance_trend,
+    build_global,
+    build_reconciliation,
+    load_account_flags,
+    load_balance_entries,
+    load_transactions,
+)
 
 router = APIRouter(prefix="/api/insights")
 
@@ -21,23 +28,18 @@ def category_monthly():
 def balance_trend():
     with get_conn() as conn:
         df = load_transactions(conn)
-    if df.empty:
-        return []
-    trend = (
-        df[df["balance_after"].notna()]
-        .sort_values("date")[["account", "date", "balance_after"]]
-        .to_dict(orient="records")
-    )
-    return trend
+        entries = load_balance_entries(conn)
+        account_flags = load_account_flags(conn)
+    return build_balance_trend(df, entries, account_flags)
 
 
-@router.get("/calculator")
-def calculator():
+@router.get("/reconciliation")
+def reconciliation():
     with get_conn() as conn:
         df = load_transactions(conn)
-        manual = load_manual_balances(conn)
-    calc = build_calculator(df, manual)
-    # NaN isn't valid JSON — swap for null before serializing (unmatched
-    # account/month pairs legitimately have a missing derived or recorded side).
+        entries = load_balance_entries(conn)
+    calc = build_reconciliation(df, entries)
+    # NaN isn't valid JSON — swap for null before serializing (an entry with
+    # no transaction at/before its date legitimately has no derived side).
     calc = calc.astype(object).where(calc.notna(), None)
     return calc.to_dict(orient="records")

@@ -100,7 +100,7 @@ export function matchesKeyword(description, keyword) {
 
 /**
  * Whether two rule source scopes overlap, matching engine.py's
- * `WHERE source IS NULL OR source = ?`: "(any source)" (null/"") overlaps
+ * `WHERE source IS NULL OR source = ?`: "All sources" (null/"") overlaps
  * with everything.
  */
 export function sourceScopesOverlap(a, b) {

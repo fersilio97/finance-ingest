@@ -9,6 +9,11 @@ engineer writes the verification evidence.
 | [001](features/001-rule-keyword-and-match-preview.md) | Smart rule keyword, match preview, and conflict warning | Shipped | 1 |
 | [002](features/002-group-review-queue-by-merchant.md) | Group the review queue by merchant, decide once per group | Shipped | 1 |
 | [003](features/003-reconciliation-three-states.md) | Reconciliation: stop shouting MISMATCH when nothing was recorded | Shipped | 1 |
+| [004](features/004-upload-visibility-stats.md) | Upload visibility: which files were uploaded, stats, staleness (backend) | Shipped | 2 |
+| [005](features/005-balance-entries-reconciliation.md) | Balance entries: exact-timestamp balances, per-entry reconciliation (backend) | Shipped | 2 |
+| [006](features/006-balance-trend-and-drilldown.md) | Balance trend for all 6 accounts + aggregated line; transaction drill-down filters (backend) | Shipped | 2 |
+| [007](features/007-upload-visibility-pipeline-clarity.md) | Upload visibility and pipeline clarity (frontend) | Shipped | 2 |
+| [008](features/008-eom-balances-reconciliation-ui.md) | Balance-entry UI (datetime, dropdown, delete) and per-entry reconciliation panel (frontend) | Shipped | 2 |
 
 **Status values:** Proposed · Approved · In progress · Shipped · Rejected
 

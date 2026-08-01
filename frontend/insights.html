@@ -18,26 +18,51 @@
 
     <section class="panel">
       <h2>Balance trend</h2>
-      <p class="eyebrow">Accounts whose source files carry a running balance (BoA Checking, Fidelity Savings).</p>
-      <canvas id="balance-chart" width="1100" height="280"></canvas>
+      <p class="eyebrow">
+        All 6 accounts. Solid lines (BoA Checking, Fidelity Savings) are real reported
+        balances; dashed lines are <strong>relative running totals starting at 0</strong> for
+        accounts with no native running-balance field — read their shape, not their level.
+        The heavy dotted line is the aggregate across every account. Dots mark balances you
+        recorded by hand.
+      </p>
+      <div id="balance-loading">
+        <div class="skeleton" style="height: 260px;"></div>
+      </div>
+      <div class="chart-wrap" id="balance-chart-wrap" hidden>
+        <canvas id="balance-chart"></canvas>
+        <div id="balance-tooltip" class="chart-tooltip" hidden></div>
+      </div>
+      <div id="balance-legend" class="chart-legend" hidden></div>
       <div id="balance-empty" class="empty-state" hidden></div>
+      <div id="balance-error" class="field-error" hidden></div>
     </section>
 
     <div class="split">
       <section class="panel">
         <h2>Category totals by month</h2>
+
+        <h3>Account balances</h3>
+        <div id="balance-strip-loading" class="balance-strip"></div>
+        <div id="balance-strip" class="balance-strip" hidden></div>
+        <div id="balance-strip-empty" class="empty-state" hidden></div>
+        <div id="balance-strip-error" class="field-error" hidden></div>
+
+        <h3>By category</h3>
+        <p class="eyebrow">Click a column header to sort. Click an amount to see the transactions behind it.</p>
         <div class="table-scroll">
           <table id="category-table"></table>
         </div>
         <div id="category-empty" class="empty-state" hidden></div>
+        <div id="category-error" class="field-error" hidden></div>
       </section>
 
       <section class="panel">
-        <h2>Calculator — EOM reconciliation</h2>
-        <div id="calculator-summary" class="calc-summary muted"></div>
-        <div id="calculator-list"></div>
-        <div id="calculator-empty" class="empty-state" hidden></div>
-        <div id="calculator-error" class="field-error" hidden></div>
+        <h2>Reconciliation</h2>
+        <p class="eyebrow">Each balance you've recorded, checked against the balance derived from transactions as of that moment — not just end-of-month.</p>
+        <div id="reconciliation-summary" class="calc-summary muted"></div>
+        <div id="reconciliation-list"></div>
+        <div id="reconciliation-empty" class="empty-state" hidden></div>
+        <div id="reconciliation-error" class="field-error" hidden></div>
       </section>
     </div>
   </div>

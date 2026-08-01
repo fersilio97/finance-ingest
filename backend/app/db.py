@@ -53,6 +53,25 @@ CREATE TABLE IF NOT EXISTS sources (
     account TEXT NOT NULL,
     has_running_balance INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS uploads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    uploaded_at TEXT NOT NULL DEFAULT (datetime('now')),
+    row_count INTEGER,
+    date_start TEXT,
+    date_end TEXT,
+    processed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS balance_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    balance REAL NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 SOURCES = [
@@ -114,12 +133,41 @@ def _backfill_batch_ids(conn) -> None:
         conn.execute("UPDATE transactions SET batch_id = ? WHERE batch_id IS NULL", (batch_id,))
 
 
+def _migrate_manual_balances_to_entries(conn) -> None:
+    """One-time fold: manual_balances (UNIQUE(account, month), one entry per
+    account per month) is superseded by balance_entries (exact timestamp, no
+    uniqueness constraint, multiple entries per month allowed). manual_balances
+    is left in place — SQLite can't drop/change its UNIQUE constraint without a
+    full table rebuild, and there's no need to risk that against a real DB for
+    a table nothing writes to anymore.
+
+    balance_entries has no UNIQUE constraint (multiple real entries can
+    legitimately share an account+timestamp+balance), so this can't lean on
+    INSERT OR IGNORE for idempotency the way _backfill_batch_ids does. Instead
+    it checks for an already-migrated row with the same (account, recorded_at,
+    balance) before inserting — safe to run on every startup, a no-op once the
+    fold has happened once."""
+    rows = conn.execute("SELECT account, month, balance FROM manual_balances").fetchall()
+    for row in rows:
+        recorded_at = f"{row['month']}-01T00:00:00"
+        existing = conn.execute(
+            "SELECT id FROM balance_entries WHERE account = ? AND recorded_at = ? AND balance = ?",
+            (row["account"], recorded_at, row["balance"]),
+        ).fetchone()
+        if not existing:
+            conn.execute(
+                "INSERT INTO balance_entries (account, recorded_at, balance) VALUES (?, ?, ?)",
+                (row["account"], recorded_at, row["balance"]),
+            )
+
+
 def init_db():
     with get_conn() as conn:
         conn.executescript(SCHEMA)
         _ensure_column(conn, "transactions", "original_id", "TEXT")
         _ensure_column(conn, "transactions", "batch_id", "INTEGER")
         _backfill_batch_ids(conn)
+        _migrate_manual_balances_to_entries(conn)
         for key, label, account, has_balance in SOURCES:
             conn.execute(
                 "INSERT OR IGNORE INTO sources (key, label, account, has_running_balance) "

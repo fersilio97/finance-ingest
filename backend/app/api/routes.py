@@ -1,3 +1,5 @@
+import re
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile
@@ -6,15 +8,17 @@ from pydantic import BaseModel, field_validator
 
 from ..categories import CATEGORIES
 from ..db import SOURCES, get_conn
+from ..parsers import PARSERS
 from ..pipeline.enrich import enrich_all, enrich_last_batch
 from ..pipeline.export import ACCOUNTS_XLSX, TRANSACTIONS_CSV, export_all
 from ..pipeline.ingest import save_upload
-from ..pipeline.normalize import normalize_all
+from ..pipeline.normalize import ACCOUNTS, normalize_all
 from ..rules import store as rules_store
 
 router = APIRouter(prefix="/api")
 
 VALID_SOURCES = {key for key, *_ in SOURCES}
+MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 @router.get("/categories")
@@ -36,16 +40,106 @@ async def upload(source: str, files: list[UploadFile]):
     if source not in VALID_SOURCES:
         raise HTTPException(404, f"Unknown source: {source}")
     saved = []
-    for f in files:
-        content = await f.read()
-        path = save_upload(source, f.filename, content)
-        saved.append(str(path))
+    with get_conn() as conn:
+        for f in files:
+            content = await f.read()
+            path = save_upload(source, f.filename, content)
+            saved.append(str(path))
+
+            # Read-only stats pass, purely for the uploads table — the
+            # parser doesn't touch the DB itself, so calling it here (ahead
+            # of the real call inside normalize_all()) has no side effects.
+            # Never let a parse failure block the actual upload: fall back
+            # to NULL stats rather than raising.
+            row_count = date_start = date_end = None
+            try:
+                rows = PARSERS[source](path, account=ACCOUNTS.get(source, source))
+                row_count = len(rows)
+                dates = [r["date"] for r in rows if r.get("date")]
+                if dates:
+                    date_start, date_end = min(dates), max(dates)
+            except Exception:
+                pass
+
+            conn.execute(
+                "INSERT INTO uploads (source, filename, row_count, date_start, date_end) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (source, f.filename, row_count, date_start, date_end),
+            )
     return {"saved": saved}
+
+
+@router.get("/uploads")
+def list_uploads():
+    """One entry per source (even sources with zero uploads/transactions),
+    combining not-yet-triggered upload metadata with already-ingested
+    transaction coverage — so the Upload UI can show both "what's about to
+    happen" and "how stale is what's already in"."""
+    with get_conn() as conn:
+        today = date.today()
+        result = []
+        for source_row in conn.execute("SELECT key, label FROM sources").fetchall():
+            key, label = source_row["key"], source_row["label"]
+
+            pending_rows = conn.execute(
+                "SELECT id, filename, uploaded_at, row_count, date_start, date_end "
+                "FROM uploads WHERE source = ? AND processed_at IS NULL ORDER BY uploaded_at",
+                (key,),
+            ).fetchall()
+            pending_files = [dict(r) for r in pending_rows]
+
+            row_counts = [f["row_count"] for f in pending_files if f["row_count"] is not None]
+            starts = [f["date_start"] for f in pending_files if f["date_start"]]
+            ends = [f["date_end"] for f in pending_files if f["date_end"]]
+            pending_aggregate = {
+                "file_count": len(pending_files),
+                "row_count": sum(row_counts) if row_counts else None,
+                "date_start": min(starts) if starts else None,
+                "date_end": max(ends) if ends else None,
+            }
+
+            coverage_row = conn.execute(
+                "SELECT MIN(date) AS date_start, MAX(date) AS date_end FROM transactions WHERE source = ?",
+                (key,),
+            ).fetchone()
+            ingested_coverage = {
+                "date_start": coverage_row["date_start"],
+                "date_end": coverage_row["date_end"],
+            }
+
+            latest_covered = max(
+                (d for d in (ingested_coverage["date_end"], pending_aggregate["date_end"]) if d),
+                default=None,
+            )
+            days_since_latest_covered = None
+            if latest_covered:
+                try:
+                    days_since_latest_covered = (today - date.fromisoformat(latest_covered)).days
+                except ValueError:
+                    days_since_latest_covered = None
+
+            result.append(
+                {
+                    "source": key,
+                    "label": label,
+                    "pending_files": pending_files,
+                    "pending_aggregate": pending_aggregate,
+                    "ingested_coverage": ingested_coverage,
+                    "days_since_latest_covered": days_since_latest_covered,
+                }
+            )
+        return result
 
 
 @router.post("/trigger")
 def trigger():
     normalize_summary = normalize_all()
+    # normalize_all() processes every source's incoming files unconditionally
+    # in one pass (not per-source) — mirror that here: stamp every currently-
+    # pending upload as processed in one shot, rather than trying to match
+    # individual uploads rows to individual normalize() outcomes.
+    with get_conn() as conn:
+        conn.execute("UPDATE uploads SET processed_at = datetime('now') WHERE processed_at IS NULL")
     enrich_summary = enrich_all()
     try:
         export_summary = export_all()
@@ -62,14 +156,32 @@ def trigger():
 
 
 @router.get("/transactions")
-def list_transactions(status: Optional[str] = None):
+def list_transactions(status: Optional[str] = None, category: Optional[str] = None, month: Optional[str] = None):
+    if month is not None and not MONTH_RE.match(month):
+        raise HTTPException(400, f"month must be YYYY-MM, got: {month!r}")
+
+    # Same parameterized-clause pattern as everywhere else in this file
+    # (e.g. classify_transaction's UPDATE) — clauses combine with AND,
+    # every value is a bind param, never string-formatted into the query.
+    clauses = []
+    params: list = []
+    if status:
+        clauses.append("status = ?")
+        params.append(status)
+    if category:
+        clauses.append("category = ?")
+        params.append(category)
+    if month:
+        clauses.append("date LIKE ?")
+        params.append(f"{month}%")
+
+    query = "SELECT * FROM transactions"
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+    query += " ORDER BY date DESC"
+
     with get_conn() as conn:
-        if status:
-            rows = conn.execute(
-                "SELECT * FROM transactions WHERE status = ? ORDER BY date DESC", (status,)
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM transactions ORDER BY date DESC").fetchall()
+        rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -204,41 +316,57 @@ def remove_rule(rule_id: int):
     return {"ok": True, "reverted": reverted}
 
 
-class ManualBalanceRequest(BaseModel):
+class BalanceEntryRequest(BaseModel):
     account: str
-    month: str  # "YYYY-MM"
+    recorded_at: str  # ISO-8601 datetime, e.g. "2026-07-15T14:30:00"
     balance: float
 
+    @field_validator("account")
+    @classmethod
+    def account_not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("account can't be blank")
+        return v.strip()
 
-@router.get("/manual-balances")
-def get_manual_balances():
+    @field_validator("recorded_at")
+    @classmethod
+    def recorded_at_must_parse(cls, v: str) -> str:
+        try:
+            datetime.fromisoformat(v)
+        except ValueError:
+            raise ValueError(f"recorded_at must be an ISO-8601 datetime, got: {v!r}")
+        return v
+
+
+@router.get("/balance-entries")
+def get_balance_entries():
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM manual_balances ORDER BY account, month"
+            "SELECT * FROM balance_entries ORDER BY account, recorded_at"
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-@router.post("/manual-balances")
-def set_manual_balance(body: ManualBalanceRequest):
+@router.post("/balance-entries")
+def add_balance_entry(body: BalanceEntryRequest):
     with get_conn() as conn:
-        conn.execute(
-            "INSERT INTO manual_balances (account, month, balance) VALUES (?, ?, ?) "
-            "ON CONFLICT(account, month) DO UPDATE SET balance = excluded.balance",
-            (body.account, body.month, body.balance),
+        cur = conn.execute(
+            "INSERT INTO balance_entries (account, recorded_at, balance) VALUES (?, ?, ?)",
+            (body.account, body.recorded_at, body.balance),
         )
-    return {"ok": True}
+        entry_id = cur.lastrowid
+    return {"id": entry_id, "ok": True}
 
 
-@router.delete("/manual-balances/{balance_id}")
-def remove_manual_balance(balance_id: int):
+@router.delete("/balance-entries/{entry_id}")
+def remove_balance_entry(entry_id: int):
     with get_conn() as conn:
         existing = conn.execute(
-            "SELECT id FROM manual_balances WHERE id = ?", (balance_id,)
+            "SELECT id FROM balance_entries WHERE id = ?", (entry_id,)
         ).fetchone()
         if not existing:
-            raise HTTPException(404, "Manual balance not found")
-        conn.execute("DELETE FROM manual_balances WHERE id = ?", (balance_id,))
+            raise HTTPException(404, "Balance entry not found")
+        conn.execute("DELETE FROM balance_entries WHERE id = ?", (entry_id,))
     return {"ok": True}
 
 

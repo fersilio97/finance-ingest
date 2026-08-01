@@ -2,6 +2,7 @@ import { merchantKey } from "./merchant-key.js";
 import { suggestKeyword, matchesKeyword, ruleAppliesToSource, sourceScopesOverlap } from "./rule-keyword.js";
 
 const API = "/api";
+const ANY_SOURCE_LABEL = "All sources";
 
 async function jsonFetch(url, options) {
   const res = await fetch(url, options);
@@ -47,6 +48,20 @@ const GROUPS = new Map(); // merchantKey -> { key, members, rowEl, memberRowEls 
 const expandedKeys = new Set();
 const zoneFiles = {};
 
+// GET /api/uploads, one entry per source (spec 004/007). null = not loaded
+// or the last fetch failed — every renderer below must handle that, not
+// just the empty-array case.
+let UPLOADS = null;
+
+// A gap between "today" and the latest date any source covers is *expected*
+// — statements close a few weeks before you get around to importing them.
+// 45 days is chosen as "more than one calendar month plus the usual grace
+// period before the next import" — comfortably past the live data's normal
+// cadence (23-31 days for the two sources that get imported regularly) but
+// well short of the sources that are genuinely stale (213-232 days live).
+// See docs/features/007 for the reasoning against real numbers.
+const GAP_WARNING_DAYS = 45;
+
 async function loadSources() {
   SOURCES = await jsonFetch(`${API}/sources`);
   renderDropZones();
@@ -67,7 +82,7 @@ function categoryOptionsHtml(selected = "") {
 
 function sourceOptionsHtml(selected = "") {
   return (
-    `<option value="" ${selected ? "" : "selected"}>(any source)</option>` +
+    `<option value="" ${selected ? "" : "selected"}>${ANY_SOURCE_LABEL}</option>` +
     SOURCES.map(
       (s) => `<option value="${s.key}" ${s.key === selected ? "selected" : ""}>${s.label}</option>`
     ).join("")
@@ -82,6 +97,7 @@ function renderDropZones() {
         <div class="zone-label">${s.label}</div>
         <div class="zone-hint">click or drop .csv</div>
         <ul class="file-list"></ul>
+        <div class="zone-uploads" data-role="zone-uploads"><div class="skeleton" style="width:90%"></div></div>
       </div>`
   ).join("");
 
@@ -152,19 +168,183 @@ async function uploadFiles(sourceKey, fileList) {
     entries.forEach((e) => (e.status = "failed"));
   }
   renderFileList(sourceKey);
+  // The in-flight list above is session-only UX; the server-persisted
+  // uploads row (filename, stats, pending state) is the thing that
+  // survives a reload, so refresh it every time — success or failure,
+  // since a failed request may still have partially saved files server-side.
+  await loadUploads();
+}
+
+// ---------------------------------------------------------------------------
+// Upload visibility — persisted uploads (spec 007, backend: spec 004)
+// ---------------------------------------------------------------------------
+
+function laterDate(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  return a > b ? a : b;
+}
+
+function formatDateRange(start, end) {
+  if (!start || !end) return "date range unknown";
+  return start === end ? start : `${start} → ${end}`;
+}
+
+async function loadUploads() {
+  try {
+    UPLOADS = await jsonFetch(`${API}/uploads`);
+  } catch (err) {
+    UPLOADS = null;
+    renderPendingSummary(err);
+    renderAllZoneUploads();
+    return;
+  }
+  renderPendingSummary();
+  renderAllZoneUploads();
+}
+
+function renderPendingSummary(err) {
+  const el = document.getElementById("pending-summary");
+  if (!el) return;
+  el.classList.remove("is-error");
+  if (err) {
+    el.textContent = `Couldn't check what's pending — ${err.message}.`;
+    el.classList.add("is-error");
+    return;
+  }
+  if (UPLOADS === null) {
+    el.textContent = "Couldn't check what's pending.";
+    el.classList.add("is-error");
+    return;
+  }
+  const filesTotal = UPLOADS.reduce((sum, u) => sum + u.pending_aggregate.file_count, 0);
+  const sourcesWithPending = UPLOADS.filter((u) => u.pending_aggregate.file_count > 0).length;
+  el.textContent =
+    filesTotal === 0
+      ? "Nothing waiting — every uploaded file has already been processed."
+      : `${filesTotal} file${filesTotal === 1 ? "" : "s"} ready to process across ${sourcesWithPending} source${sourcesWithPending === 1 ? "" : "s"}.`;
+}
+
+function renderAllZoneUploads() {
+  for (const s of SOURCES) renderZoneUploads(s.key);
+}
+
+function renderZoneUploads(sourceKey) {
+  const zone = document.querySelector(`[data-zone="${sourceKey}"]`);
+  const el = zone?.querySelector('[data-role="zone-uploads"]');
+  if (!el) return;
+  el.innerHTML = "";
+
+  if (UPLOADS === null) {
+    const div = document.createElement("div");
+    div.className = "zone-uploads-error";
+    div.textContent = "Couldn't load upload history for this source.";
+    el.appendChild(div);
+    return;
+  }
+
+  const entry = UPLOADS.find((u) => u.source === sourceKey);
+  if (!entry) return; // shouldn't happen — GET /api/uploads always returns every source
+
+  const { pending_files, pending_aggregate, ingested_coverage, days_since_latest_covered } = entry;
+  const hasAnyData = pending_files.length > 0 || ingested_coverage.date_start || ingested_coverage.date_end;
+  if (!hasAnyData) {
+    const div = document.createElement("div");
+    div.className = "zone-uploads-empty";
+    div.textContent = "Nothing uploaded yet — drop a CSV above to get started.";
+    el.appendChild(div);
+    return;
+  }
+
+  if (pending_files.length > 0) {
+    const ul = document.createElement("ul");
+    ul.className = "upload-record-list";
+    for (const f of pending_files) {
+      const li = document.createElement("li");
+      li.className = "upload-record";
+      const nameEl = document.createElement("span");
+      nameEl.className = "upload-name truncate";
+      nameEl.textContent = f.filename;
+      nameEl.title = f.filename;
+      const metaEl = document.createElement("span");
+      metaEl.className = "upload-meta";
+      const rows = f.row_count == null ? "rows unknown" : `${f.row_count} row${f.row_count === 1 ? "" : "s"}`;
+      metaEl.textContent = `${rows} · ${formatDateRange(f.date_start, f.date_end)}`;
+      li.append(nameEl, metaEl);
+      ul.appendChild(li);
+    }
+    el.appendChild(ul);
+
+    const waitingLine = document.createElement("div");
+    waitingLine.className = "zone-coverage";
+    const rowsPart = pending_aggregate.row_count != null ? `, ${pending_aggregate.row_count} row${pending_aggregate.row_count === 1 ? "" : "s"}` : "";
+    waitingLine.textContent =
+      `Waiting to process: ${pending_aggregate.file_count} file${pending_aggregate.file_count === 1 ? "" : "s"}` +
+      `${rowsPart}, covering ${formatDateRange(pending_aggregate.date_start, pending_aggregate.date_end)}.`;
+    el.appendChild(waitingLine);
+  }
+
+  const latest = laterDate(ingested_coverage.date_end, pending_aggregate.date_end);
+  if (latest) {
+    const coverageLine = document.createElement("div");
+    coverageLine.className = "zone-coverage muted";
+    const includesPending =
+      pending_aggregate.date_end && (!ingested_coverage.date_end || pending_aggregate.date_end > ingested_coverage.date_end);
+    coverageLine.textContent = `Up to date through ${latest}${includesPending ? " (includes a pending file)" : ""}.`;
+    el.appendChild(coverageLine);
+  }
+
+  if (days_since_latest_covered != null && days_since_latest_covered > GAP_WARNING_DAYS) {
+    const gapLine = document.createElement("div");
+    gapLine.className = "zone-gap-warning";
+    gapLine.textContent = `${days_since_latest_covered} days since the last covered date${latest ? ` (${latest})` : ""} — probably worth a fresh export.`;
+    el.appendChild(gapLine);
+  }
+}
+
+// Turns the raw {normalize, enrich, export} response into a couple of plain
+// sentences instead of a JSON dump (spec 007). Note: enrich_all() sweeps the
+// *entire* needs_review queue on every trigger, not just this run's newly
+// imported rows — so "classified this run" / "still need review" describe
+// the whole queue's outcome, not a subset scoped to what was just imported.
+// Being explicit about that ("across the full queue") rather than implying
+// a tighter scope the API doesn't actually give us.
+function buildTriggerSummaryText(result) {
+  const bySource = Object.entries(result.normalize || {});
+  const touched = bySource.filter(([, s]) => s.parsed > 0);
+  const parsedTotal = bySource.reduce((sum, [, s]) => sum + s.parsed, 0);
+  const insertedTotal = bySource.reduce((sum, [, s]) => sum + s.inserted, 0);
+  const classified = result.enrich?.classified ?? 0;
+  const considered = result.enrich?.considered ?? 0;
+  const stillReview = Math.max(considered - classified, 0);
+
+  let headline;
+  if (parsedTotal === 0) {
+    headline = "No files were waiting to process — nothing to import this run.";
+  } else if (insertedTotal === 0) {
+    headline = `Read ${parsedTotal} row${parsedTotal === 1 ? "" : "s"} across ${touched.length} source${touched.length === 1 ? "" : "s"} — all were already in the database (0 new).`;
+  } else {
+    headline = `Imported ${insertedTotal} new transaction${insertedTotal === 1 ? "" : "s"} across ${touched.length} source${touched.length === 1 ? "" : "s"} (${parsedTotal} row${parsedTotal === 1 ? "" : "s"} read).`;
+  }
+  return `${headline} ${classified} classified automatically this run; ${stillReview} still need review, across the full queue.`;
 }
 
 document.getElementById("trigger-btn").addEventListener("click", async (e) => {
   const btn = e.currentTarget;
   const summaryEl = document.getElementById("trigger-summary");
   btn.disabled = true;
+  summaryEl.classList.remove("is-error");
   summaryEl.textContent = "Running…";
   try {
     const result = await jsonFetch(`${API}/trigger`, { method: "POST" });
-    summaryEl.textContent = JSON.stringify(result, null, 2);
-    await Promise.all([loadReview(), loadRules(), loadBalances()]);
+    summaryEl.textContent = buildTriggerSummaryText(result);
+    // Re-fetch uploads too — this is what confirms processed_at got stamped
+    // end-to-end: pending_files for the sources just processed should drop
+    // to empty and the pipeline-tile summary should update to match.
+    await Promise.all([loadReview(), loadRules(), loadBalances(), loadUploads()]);
   } catch (err) {
     summaryEl.textContent = `Failed: ${err.message}`;
+    summaryEl.classList.add("is-error");
   } finally {
     btn.disabled = false;
   }
@@ -248,12 +428,12 @@ function computeWarnings({ keyword, ruleSource, matches, newPriority = 100 }) {
     if (kw.includes(existing) && existingFiresFirst) {
       warnings.push(
         `“${keyword}” will never fire — rule #${rule.id} “${rule.match_text}” ` +
-          `(${rule.source || "any source"}) → ${rule.category} already matches everything this would, and it was created first.`
+          `(${rule.source || ANY_SOURCE_LABEL}) → ${rule.category} already matches everything this would, and it was created first.`
       );
     } else if (existing.includes(kw) && !kw.includes(existing)) {
       warnings.push(
         `This keyword also swallows rule #${rule.id} “${rule.match_text}” ` +
-          `(${rule.source || "any source"}) → ${rule.category}. Transactions that rule catches today may change category.`
+          `(${rule.source || ANY_SOURCE_LABEL}) → ${rule.category}. Transactions that rule catches today may change category.`
       );
     }
   }
@@ -977,9 +1157,18 @@ function renderSourceSelect() {
   document.getElementById("rule-source").innerHTML = sourceOptionsHtml();
 }
 
+// Dropdown, not free text (feature 005's handoff left this an open choice —
+// the API only rejects blank/whitespace account names, nothing checks the
+// value against known accounts). A dropdown constrained to GET /api/sources'
+// account field closes that gap client-side: a typo'd account name would
+// silently create an orphan that no transaction's `account` will ever match,
+// so its reconciliation row would sit at `not_checked` forever with no way
+// to tell "genuinely unreconcilable" apart from "user fat-fingered the name".
 function renderAccountSelect() {
   const select = document.getElementById("balance-account");
-  select.innerHTML = SOURCES.map((s) => `<option value="${s.account}">${s.account}</option>`).join("");
+  select.innerHTML =
+    `<option value="" selected disabled>Select account…</option>` +
+    SOURCES.map((s) => `<option value="${s.account}">${s.account}</option>`).join("");
 }
 
 function renderCategorySelect() {
@@ -1022,7 +1211,7 @@ function renderRuleRow(rule) {
       <div class="field-error" data-role="error"></div>
     </td>
   `;
-  tr.querySelector('[data-cell="source"]').textContent = rule.source || "(any)";
+  tr.querySelector('[data-cell="source"]').textContent = rule.source || ANY_SOURCE_LABEL;
   const matchCell = tr.querySelector('[data-cell="match"]');
   matchCell.textContent = rule.match_text;
   matchCell.title = rule.match_text;
@@ -1189,65 +1378,167 @@ ruleForm.addEventListener("submit", async (e) => {
 });
 
 // ---------------------------------------------------------------------------
-// Manual EOM Balances
+// Balance Entries (spec 008) — supersedes the minimal disclosed patch spec
+// 007 left here. Feature 005 (backend, Session 2) replaced the old
+// UNIQUE(account, month) manual_balances table with balance_entries, keyed
+// by an exact ISO-8601 datetime instead of a month — more than one entry per
+// account per month is now legitimate (e.g. "checked it twice this week").
+// This is the full UI 005's handoff note asked for: a datetime-local input,
+// an account dropdown (see renderAccountSelect() above for why dropdown over
+// free text), and per-entry delete (there is no PUT — editing is
+// delete-then-recreate, per 005's own handoff note).
 // ---------------------------------------------------------------------------
 
+// "2025-01-21T12:00:00" (or the no-seconds "2025-01-21T12:00" the server
+// also accepts as-is, per 005's handoff) -> "2025-01-21 12:00" for display.
+// The full raw value always stays available via `title` on the cell.
+function formatRecordedAt(iso) {
+  const [datePart, timePart = ""] = iso.split("T");
+  const hhmm = timePart.slice(0, 5);
+  return hhmm ? `${datePart} ${hhmm}` : datePart;
+}
+
 async function loadBalances() {
-  const tbody = document.querySelector("#balances-table tbody");
+  const table = document.getElementById("balances-table");
+  const tbody = table.querySelector("tbody");
   const emptyEl = document.getElementById("balances-empty");
-  skeletonRows(tbody, 3);
+  const errorEl = document.getElementById("balances-error");
 
-  const balances = await jsonFetch(`${API}/manual-balances`);
-  tbody.innerHTML = "";
-  setEmpty(emptyEl, balances.length === 0, "No manual balances recorded yet.");
-  document.getElementById("balances-table").hidden = balances.length === 0;
+  errorEl.hidden = true;
+  emptyEl.hidden = true;
+  table.hidden = false;
+  skeletonRows(tbody, 4);
 
-  for (const b of balances) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td data-cell="account"></td><td data-cell="month"></td><td class="num" data-cell="balance"></td>`;
-    tr.querySelector('[data-cell="account"]').textContent = b.account;
-    tr.querySelector('[data-cell="month"]').textContent = b.month;
-    tr.querySelector('[data-cell="balance"]').textContent = b.balance.toFixed(2);
-    tbody.appendChild(tr);
+  let entries;
+  try {
+    entries = await jsonFetch(`${API}/balance-entries`);
+  } catch (err) {
+    tbody.innerHTML = "";
+    table.hidden = true;
+    errorEl.hidden = false;
+    errorEl.textContent = `Couldn't load balance entries — ${err.message}.`;
+    return;
   }
+
+  tbody.innerHTML = "";
+  if (entries.length === 0) {
+    table.hidden = true;
+    setEmpty(emptyEl, true, "No balance entries recorded yet — record one below to start reconciling on the Insights page.");
+    return;
+  }
+
+  // Most-recently-recorded first — with multiple entries per account per
+  // month now legitimate (the whole point of 005), a plain API-order list
+  // (account, then recorded_at ascending) buries what the user just added
+  // at the bottom every time.
+  const sorted = entries.slice().sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : -1));
+  for (const b of sorted) {
+    tbody.appendChild(renderBalanceRow(b));
+  }
+}
+
+function renderBalanceRow(entry) {
+  const tr = document.createElement("tr");
+  tr.innerHTML =
+    `<td data-cell="account"></td><td data-cell="recorded"></td>` +
+    `<td class="num" data-cell="balance"></td><td data-cell="actions"></td>`;
+  tr.querySelector('[data-cell="account"]').textContent = entry.account;
+  const recordedCell = tr.querySelector('[data-cell="recorded"]');
+  recordedCell.textContent = formatRecordedAt(entry.recorded_at);
+  recordedCell.title = entry.recorded_at;
+  tr.querySelector('[data-cell="balance"]').textContent = entry.balance.toFixed(2);
+
+  const actionsCell = tr.querySelector('[data-cell="actions"]');
+  const delBtn = document.createElement("button");
+  delBtn.type = "button";
+  delBtn.className = "ghost";
+  delBtn.textContent = "Delete";
+  const rowErrorEl = document.createElement("div");
+  rowErrorEl.className = "field-error";
+  delBtn.addEventListener("click", async () => {
+    delBtn.disabled = true;
+    rowErrorEl.textContent = "";
+    try {
+      await jsonFetch(`${API}/balance-entries/${entry.id}`, { method: "DELETE" });
+      await loadBalances();
+    } catch (err) {
+      rowErrorEl.textContent = err.message;
+      delBtn.disabled = false;
+    }
+  });
+  actionsCell.append(delBtn, rowErrorEl);
+
+  return tr;
 }
 
 document.getElementById("balance-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const form = e.target;
+  const errorEl = document.getElementById("balance-error");
+  errorEl.textContent = "";
+
+  const account = form.account.value;
+  const recordedRaw = form.recorded_at.value; // datetime-local: "YYYY-MM-DDTHH:MM"
+  if (!account) {
+    errorEl.textContent = "Pick an account.";
+    return;
+  }
+  if (!recordedRaw) {
+    errorEl.textContent = "Pick a date and time.";
+    return;
+  }
+  // The server stores recorded_at verbatim and does not normalize it (005's
+  // handoff note) — a no-seconds datetime-local value would otherwise be
+  // stored as e.g. "...T12:00" alongside other entries stored with ":00"
+  // seconds, which is harmless to the API but needlessly inconsistent to
+  // look at in the list above. Normalize on the way in instead.
+  const recordedAt = recordedRaw.length === 16 ? `${recordedRaw}:00` : recordedRaw;
+
   const body = {
-    account: form.account.value,
-    month: form.month.value,
+    account,
+    recorded_at: recordedAt,
     balance: Number(form.balance.value),
   };
-  await jsonFetch(`${API}/manual-balances`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  form.reset();
-  loadBalances();
+  try {
+    await jsonFetch(`${API}/balance-entries`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    form.reset();
+    loadBalances();
+  } catch (err) {
+    errorEl.textContent = err.message;
+  }
 });
 
-// The Insights "Not checked" remedy link (spec 003 §A.1) jumps here with
-// ?account=...&month=... — prefill and focus the balance form so entering
-// the missing figure is one field-fill away, not a hunt.
+// The Insights reconciliation panel's remedy link (spec 008, replacing spec
+// 003's month-scoped version) jumps here with ?account=... — entries are
+// timestamped, not month-keyed, so there is no single "the month" left to
+// prefill; only the account carries over. Selects that account in the form
+// and focuses the datetime field so recording a fresh entry for it is one
+// date-pick away, whether that's because nothing has been recorded for this
+// account yet or because an existing entry couldn't be reconciled and the
+// user wants to add a corrected one (delete-then-recreate — see the
+// balance-entries table's own Delete action above).
 function prefillBalanceFormFromQuery() {
   const params = new URLSearchParams(location.search);
   const account = params.get("account");
-  const month = params.get("month");
-  if (!account && !month) return;
+  if (!account) return;
   const accountSelect = document.getElementById("balance-account");
-  const monthInput = document.getElementById("balance-month");
-  if (account) accountSelect.value = account;
-  if (month) monthInput.value = month;
+  const recordedInput = document.getElementById("balance-recorded-at");
+  const hasOption = Array.from(accountSelect.options).some((o) => o.value === account);
+  if (hasOption) accountSelect.value = account;
   document.getElementById("balances-section")?.scrollIntoView({ block: "start" });
-  monthInput.focus();
+  recordedInput.focus();
 }
 
 (async function init() {
   await Promise.all([loadSources(), loadCategories()]);
   renderCategorySelect();
-  await Promise.all([loadReview(), loadRules(), loadBalances()]);
+  // loadUploads() must come after loadSources() (it needs the drop zones
+  // already built by renderDropZones() to have somewhere to render into) —
+  // guaranteed here since loadSources() is awaited above.
+  await Promise.all([loadReview(), loadRules(), loadBalances(), loadUploads()]);
   prefillBalanceFormFromQuery();
 })();

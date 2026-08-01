@@ -26,6 +26,7 @@
       <section class="tile muted-border">
         <h3>2–4 · Pipeline</h3>
         <p class="eyebrow">Normalize, dedupe, classify, and regenerate the exports.</p>
+        <div id="pending-summary" class="status-line"><div class="skeleton" style="width:220px"></div></div>
         <button class="primary" id="trigger-btn" type="button">Run Pipeline</button>
         <div class="actions-row">
           <a href="/api/export/xlsx"><button type="button">account_paula.xlsx</button></a>
@@ -85,23 +86,25 @@
       </section>
 
       <section class="panel" id="balances-section">
-        <h2>Manual EOM Balances</h2>
-        <p class="eyebrow">Only needed for accounts without a running balance in the source file.</p>
+        <h2>Balance Entries</h2>
+        <p class="eyebrow">Record an account balance at the exact moment you checked it — reconciled against the balance derived from your transactions as of that date on the Insights page.</p>
         <div class="table-scroll table-scroll--capped">
           <table id="balances-table">
             <thead>
-              <tr><th>Account</th><th>Month</th><th class="num">Balance</th></tr>
+              <tr><th>Account</th><th>Recorded at</th><th class="num">Balance</th><th></th></tr>
             </thead>
             <tbody></tbody>
           </table>
         </div>
         <div id="balances-empty" class="empty-state" hidden></div>
+        <div id="balances-error" class="field-error" hidden></div>
         <form class="inline" id="balance-form">
-          <select name="account" id="balance-account"></select>
-          <input name="month" id="balance-month" type="month" required />
+          <select name="account" id="balance-account" required></select>
+          <input name="recorded_at" id="balance-recorded-at" type="datetime-local" required title="Date and time you checked this balance" />
           <input name="balance" type="number" step="0.01" placeholder="Balance" required style="width:8em" />
           <button type="submit">Save</button>
         </form>
+        <div id="balance-error" class="field-error"></div>
       </section>
     </div>
   </div>

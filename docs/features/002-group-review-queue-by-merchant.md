@@ -78,6 +78,40 @@ nobody later mistakes them for bugs and nobody "fixes" the key without re-measur
 - `smith purchase` (12) and `smith food` (6) split one grocery store, because in some rows
   the store number is glued to the city (`SMITH'S FOOD & DRUG #4315LAS VEGAS NV`).
 - `7-ELEVEN` keys to `eleven purchase` — the leading `7` is stripped as non-alpha.
+- **`IN-N-OUT` splits six ways** — worse than the `smith purchase`/`smith food` split above.
+  Investigated 2026-08 after a user question about 7 ungrouped IN-N-OUT rows. The live
+  `transactions` table currently holds only **6** IN-N-OUT rows (not 7), and all six are
+  already `status=classified` via rule 30 (`match_text='in-n-out'`, `source=NULL`) — a broad
+  substring rule that catches all six regardless of how the merchant-key heuristic keys
+  them. Because of that, the original "ungrouped" symptom is **not currently reproducible**
+  in the live `needs_review` queue — but it is a real defect in the merchant-key heuristic,
+  just currently masked by an unrelated rule. Re-running `merchantKey()` against the six
+  live descriptions confirms it:
+
+  | Description | Merchant key |
+  | --- | --- |
+  | `IN-N-OUT LV - RAINBOW 02/08 PURCHASE LAS VEGAS NV` | `out rainbow` |
+  | `IN-N-OUT LAS VEGAS 05/02 PURCHASE LAS VEGAS NV` | `out las` |
+  | `IN-N-OUT GLENDORA GLENDORA CA` | `out glendora` |
+  | `IN-N-OUT LV - SAHARA LAS VEGAS NV` | `out sahara` |
+  | `IN-N-OUTWASHINGTONCITY WASHINGTON CIUT` | `outwashingtoncity washington` |
+  | `IN-N-OUT BAKERSFIELD BAKERSFIELD CA` | `out bakersfield` |
+
+  All six produce six different keys. Cause: `"IN"` (2 chars) and `"N"` (1 char) both fail
+  the `length > 2` token filter and get dropped, leaving `"OUT"` as the only surviving
+  anchor token, which then combines with whatever incidental city word follows it — or, in
+  the glued no-space case (`IN-N-OUTWASHINGTONCITY`), doesn't survive as a clean anchor at
+  all. Two candidate fixes were evaluated and rejected: widening the token window from 2 to
+  3 tokens doesn't help, because the anchor token is still `out`/`outwashingtoncity` and the
+  3rd token is still an incidental, differing city word; inserting a space at letter/digit
+  boundaries is irrelevant here — there is no digit adjacent to a letter in `IN-N-OUT`
+  itself (that fix only helps the unrelated `SMITH'S...#4315LAS VEGAS` case above). One
+  candidate that might work — treating hyphen-joined runs like `IN-N-OUT` as one glued token
+  before the cleaning/splitting step — was flagged as having dataset-wide blast radius: it
+  would change token-length semantics for every hyphenated description in the dataset, not
+  just this one, so it needs the full measurement harness (263 ± 15 groups, top-50 groups
+  covering ≥ 65% of the live queue) re-run before it could safely ship. **No code change
+  made this session** — documented as a known failure, not fixed.
 
 Acceptance criteria for the key:
 
