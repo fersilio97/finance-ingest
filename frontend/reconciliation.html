@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finance Ingestion App — Reconciliation</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="top-bar">
+      <h1>Reconciliation</h1>
+      <nav>
+        <a href="index.html">Upload &amp; Review</a>
+        <a href="transactions.html">All Transactions</a>
+        <a href="insights.html">Insights</a>
+        <a href="reconciliation.html" aria-current="page">Reconciliation</a>
+      </nav>
+    </header>
+
+    <section class="panel">
+      <p class="eyebrow">Each balance you've recorded, checked against the balance derived from transactions as of that moment — not just end-of-month.</p>
+      <div id="reconciliation-summary" class="calc-summary muted"></div>
+      <div id="reconciliation-list"></div>
+      <div id="reconciliation-empty" class="empty-state" hidden></div>
+      <div id="reconciliation-error" class="field-error" hidden></div>
+    </section>
+
+    <section class="panel" id="balances-section">
+      <h2>Balance Entries</h2>
+      <p class="eyebrow">Record an account balance at the exact moment you checked it — reconciled against the balance derived from your transactions as of that date, in the panel above.</p>
+      <div class="table-scroll table-scroll--capped">
+        <table id="balances-table">
+          <thead>
+            <tr><th>Account</th><th>Recorded at</th><th class="num">Balance</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="balances-empty" class="empty-state" hidden></div>
+      <div id="balances-error" class="field-error" hidden></div>
+      <form class="inline" id="balance-form">
+        <select name="account" id="balance-account" required></select>
+        <input name="recorded_at" id="balance-recorded-at" type="datetime-local" required title="Date and time you checked this balance" />
+        <input name="balance" type="number" step="0.01" placeholder="Balance" required style="width:8em" />
+        <button type="submit">Save</button>
+      </form>
+      <div id="balance-error" class="field-error"></div>
+    </section>
+  </div>
+
+  <script src="reconciliation.js"></script>
+</body>
+</html>

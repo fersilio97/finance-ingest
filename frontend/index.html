@@ -12,7 +12,9 @@
       <h1>Finance Ingestion App</h1>
       <nav>
         <a href="index.html" aria-current="page">Upload &amp; Review</a>
+        <a href="transactions.html">All Transactions</a>
         <a href="insights.html">Insights</a>
+        <a href="reconciliation.html">Reconciliation</a>
       </nav>
     </header>
 
@@ -61,52 +63,28 @@
       <div id="review-error" class="field-error" hidden></div>
     </section>
 
-    <div class="split">
-      <section class="panel">
-        <h2>Rules</h2>
-        <div class="table-scroll table-scroll--capped">
-          <table id="rules-table">
-            <thead>
-              <tr><th>Source</th><th>Match</th><th>Category</th><th class="num">Priority</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div id="rules-empty" class="empty-state" hidden></div>
-        <form class="inline" id="rule-form">
-          <select name="source" id="rule-source"></select>
-          <input name="match_text" placeholder="keyword" required autocomplete="off" />
-          <select name="category" id="rule-category" required></select>
-          <input name="priority" type="number" value="100" style="width:4.5em" title="priority" />
-          <button type="submit">Add rule</button>
-        </form>
-        <div id="rule-preview" class="preview-line muted" hidden></div>
-        <div id="rule-warnings" class="warnings" hidden></div>
-        <div class="field-error" id="rule-error"></div>
-      </section>
-
-      <section class="panel" id="balances-section">
-        <h2>Balance Entries</h2>
-        <p class="eyebrow">Record an account balance at the exact moment you checked it — reconciled against the balance derived from your transactions as of that date on the Insights page.</p>
-        <div class="table-scroll table-scroll--capped">
-          <table id="balances-table">
-            <thead>
-              <tr><th>Account</th><th>Recorded at</th><th class="num">Balance</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
-        </div>
-        <div id="balances-empty" class="empty-state" hidden></div>
-        <div id="balances-error" class="field-error" hidden></div>
-        <form class="inline" id="balance-form">
-          <select name="account" id="balance-account" required></select>
-          <input name="recorded_at" id="balance-recorded-at" type="datetime-local" required title="Date and time you checked this balance" />
-          <input name="balance" type="number" step="0.01" placeholder="Balance" required style="width:8em" />
-          <button type="submit">Save</button>
-        </form>
-        <div id="balance-error" class="field-error"></div>
-      </section>
-    </div>
+    <section class="panel">
+      <h2>Rules</h2>
+      <div class="table-scroll table-scroll--capped">
+        <table id="rules-table">
+          <thead>
+            <tr><th>Source</th><th>Match</th><th>Category</th><th class="num">Priority</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="rules-empty" class="empty-state" hidden></div>
+      <form class="inline" id="rule-form">
+        <select name="source" id="rule-source"></select>
+        <input name="match_text" placeholder="keyword" required autocomplete="off" />
+        <select name="category" id="rule-category" required></select>
+        <input name="priority" type="number" value="100" style="width:4.5em" title="priority" />
+        <button type="submit">Add rule</button>
+      </form>
+      <div id="rule-preview" class="preview-line muted" hidden></div>
+      <div id="rule-warnings" class="warnings" hidden></div>
+      <div class="field-error" id="rule-error"></div>
+    </section>
   </div>
 
   <script type="module" src="app.js"></script>

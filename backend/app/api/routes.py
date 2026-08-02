@@ -238,8 +238,16 @@ def list_transactions(status: Optional[str] = None, category: Optional[str] = No
         clauses.append("status = ?")
         params.append(status)
     if category:
-        clauses.append("category = ?")
-        params.append(category)
+        # "Uncategorized" is a display-only label applied at aggregation time
+        # (export.py's build_global() fillna) — it's never written to the
+        # column itself, which stays NULL until classified. `= ?` can never
+        # match a NULL row, so the Insights drilldown for that column always
+        # came back empty regardless of the real total shown in the cell.
+        if category == "Uncategorized":
+            clauses.append("category IS NULL")
+        else:
+            clauses.append("category = ?")
+            params.append(category)
     if month:
         clauses.append("date LIKE ?")
         params.append(f"{month}%")
@@ -296,20 +304,41 @@ def classify_transaction(transaction_id: int, body: ClassifyRequest):
         if not txn:
             raise HTTPException(404, "Transaction not found")
 
-        rule_id = None
         if body.save_as_rule:
+            # A genuinely new rule now governs this row — same as before,
+            # this is a fresh automatic attribution, not a manual override,
+            # so any earlier overridden_at is cleared.
             rule_id = rules_store.create_rule(conn, body.source, body.match_text, body.category)
+            conn.execute(
+                "UPDATE transactions SET category = ?, rule_id = ?, status = 'classified', "
+                "overridden_at = NULL WHERE id = ?",
+                (body.category, rule_id, transaction_id),
+            )
+        else:
+            # Manual category correction. Previously this branch always set
+            # rule_id back to NULL, destroying the "which rule tagged this"
+            # audit trail on every manual fix of an already-classified row
+            # (014's provenance bug) — so leave rule_id untouched here rather
+            # than overwriting it. overridden_at is stamped only when there
+            # was a prior rule attribution to override (a first-time manual
+            # classify of a needs_review row, rule_id already NULL, isn't an
+            # "override" of anything and shouldn't be flagged as one).
+            conn.execute(
+                "UPDATE transactions SET category = ?, status = 'classified', "
+                "overridden_at = CASE WHEN rule_id IS NOT NULL THEN datetime('now') ELSE overridden_at END "
+                "WHERE id = ?",
+                (body.category, transaction_id),
+            )
 
-        conn.execute(
-            "UPDATE transactions SET category = ?, rule_id = ?, status = 'classified' WHERE id = ?",
-            (body.category, rule_id, transaction_id),
-        )
+        updated = conn.execute(
+            "SELECT * FROM transactions WHERE id = ?", (transaction_id,)
+        ).fetchone()
     # The get_conn() block above commits on exit — only now is the new rule
     # visible to a fresh connection. Re-enrich immediately so every other
     # needs_review transaction the new rule matches gets reclassified right
     # away, instead of sitting stale until the next full "Run Pipeline".
     enrich_summary = enrich_all() if body.save_as_rule else None
-    return {"ok": True, "enrich": enrich_summary}
+    return {"ok": True, "transaction": dict(updated), "enrich": enrich_summary}
 
 
 @router.get("/rules")
@@ -374,10 +403,15 @@ def remove_rule(rule_id: int):
         if last_batch is not None:
             # Only the most recent batch reverts to needs_review — older,
             # already-reviewed batches that this rule also classified are
-            # left alone rather than silently reopened.
+            # left alone rather than silently reopened. overridden_at IS NULL
+            # extends that same protection to rows within the last batch a
+            # human has since manually corrected (014): now that a manual fix
+            # preserves rule_id instead of clearing it, without this guard
+            # deleting the original rule would silently discard the human's
+            # correction too, which is worse than the bug this fix replaces.
             cur = conn.execute(
                 "UPDATE transactions SET category = NULL, rule_id = NULL, status = 'needs_review' "
-                "WHERE rule_id = ? AND batch_id = ?",
+                "WHERE rule_id = ? AND batch_id = ? AND overridden_at IS NULL",
                 (rule_id, last_batch),
             )
             reverted = cur.rowcount

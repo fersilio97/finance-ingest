@@ -12,9 +12,26 @@
       <h1>Insights</h1>
       <nav>
         <a href="index.html">Upload &amp; Review</a>
+        <a href="transactions.html">All Transactions</a>
         <a href="insights.html" aria-current="page">Insights</a>
+        <a href="reconciliation.html">Reconciliation</a>
       </nav>
     </header>
+
+    <section class="panel">
+      <h2>Uncategorized spending</h2>
+      <p class="eyebrow">
+        The money that hasn't been sorted into a category yet — the single most
+        actionable number on this page. It used to be column 22 of 24 in the table
+        below; it's the first thing here now.
+      </p>
+      <div id="uncategorized-headline-loading">
+        <div class="skeleton" style="height: 64px;"></div>
+      </div>
+      <div id="uncategorized-headline" class="headline-stat" hidden></div>
+      <div id="uncategorized-headline-empty" class="empty-state" hidden></div>
+      <div id="uncategorized-headline-error" class="field-error" hidden></div>
+    </section>
 
     <section class="panel">
       <h2>Balance trend</h2>
@@ -37,34 +54,27 @@
       <div id="balance-error" class="field-error" hidden></div>
     </section>
 
-    <div class="split">
-      <section class="panel">
-        <h2>Category totals by month</h2>
+    <section class="panel">
+      <h2>Category totals by month</h2>
 
-        <h3>Account balances</h3>
-        <div id="balance-strip-loading" class="balance-strip"></div>
-        <div id="balance-strip" class="balance-strip" hidden></div>
-        <div id="balance-strip-empty" class="empty-state" hidden></div>
-        <div id="balance-strip-error" class="field-error" hidden></div>
+      <h3>Account balances</h3>
+      <div id="balance-strip-loading" class="balance-strip"></div>
+      <div id="balance-strip" class="balance-strip" hidden></div>
+      <div id="balance-strip-empty" class="empty-state" hidden></div>
+      <div id="balance-strip-error" class="field-error" hidden></div>
 
-        <h3>By category</h3>
-        <p class="eyebrow">Click a column header to sort. Click an amount to see the transactions behind it.</p>
-        <div class="table-scroll">
-          <table id="category-table"></table>
-        </div>
-        <div id="category-empty" class="empty-state" hidden></div>
-        <div id="category-error" class="field-error" hidden></div>
-      </section>
-
-      <section class="panel">
-        <h2>Reconciliation</h2>
-        <p class="eyebrow">Each balance you've recorded, checked against the balance derived from transactions as of that moment — not just end-of-month.</p>
-        <div id="reconciliation-summary" class="calc-summary muted"></div>
-        <div id="reconciliation-list"></div>
-        <div id="reconciliation-empty" class="empty-state" hidden></div>
-        <div id="reconciliation-error" class="field-error" hidden></div>
-      </section>
-    </div>
+      <h3>By category</h3>
+      <p class="eyebrow">
+        Click a column header to sort. Click an amount to see the transactions behind it.
+        <strong>Uncategorized</strong> is pinned right after Total so it doesn't scroll
+        off-screen; dimmed cells are exact 0.00 months, real numbers stay full-strength.
+      </p>
+      <div class="table-scroll">
+        <table id="category-table"></table>
+      </div>
+      <div id="category-empty" class="empty-state" hidden></div>
+      <div id="category-error" class="field-error" hidden></div>
+    </section>
   </div>
 
   <script src="insights.js"></script>

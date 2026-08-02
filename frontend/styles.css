@@ -46,13 +46,26 @@
   box-sizing: border-box;
 }
 
-html,
-body {
+/* overflow-x: hidden lives on `html` only, not `body`. `html`'s overflow is
+   the one the UA propagates to the viewport (CSS Overflow Module's
+   propagation rule) — that alone is what stops horizontal page scroll.
+   Duplicating it onto `body` looked harmless but silently turns `body`
+   itself into a second, independent scroll container (per the same spec:
+   a non-"visible" overflow-x forces the paired overflow-y to compute as
+   "auto"). Since the viewport — not `body` — is what actually scrolls
+   here, `body`'s own scroll offset then never changes, which broke
+   `position: sticky` for every descendant (`.top-bar`): sticky computes
+   against its nearest scroll-container ancestor, and that became a `body`
+   box that was never actually the one moving. Found live via feature 016's
+   sticky-nav verification — the bar scrolled off-screen 1:1 with the page
+   instead of pinning. */
+html {
   max-width: 100%;
   overflow-x: hidden;
 }
 
 body {
+  max-width: 100%;
   margin: 0;
   background: var(--bg);
   color: var(--text);
@@ -75,14 +88,36 @@ body {
 
 /* ---------- Header / nav ---------- */
 
+/* Feature 016: sticky + more visual weight. `position: sticky` (not `fixed`)
+   so it needs no manual body padding-top offset and can never let content
+   slide under it unexpectedly. It sticks within `.page`'s own centered,
+   max-width column (not edge-to-edge across the browser chrome) — going
+   full-bleed would mean pulling the header out of `.page` into its own
+   wrapper, a markup change beyond what this fix needs; see feature doc 016
+   for the trade-off. `background: var(--surface)` (rather than the page's
+   `--bg`) is required once sticky — content now scrolls underneath it, so it
+   must be opaque — and doubles as the "more presence" cue, matching the
+   existing surface+border language `.panel`/`.tile` already use instead of a
+   drop shadow. z-index is set above the chart tooltip (5, insights.js) and
+   any future in-page absolutely-positioned overlay. */
 .top-bar {
   display: flex;
   align-items: baseline;
+  /* wrap (not nowrap) so the nav drops to its own line below the title at
+     narrow widths instead of being clipped off-screen — the plain-text nav
+     this replaces had the same narrow-width squeeze, but the clipped edge of
+     a pill is far more visible than a clipped text link was, so it's worth
+     fixing properly here rather than carrying it forward unnoticed. */
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--space-6);
-  padding-bottom: var(--space-6);
+  gap: var(--space-3) var(--space-6);
+  padding: var(--space-4) 0 var(--space-6);
   margin-bottom: var(--space-8);
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: var(--surface);
 }
 
 .top-bar h1 {
@@ -93,30 +128,49 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* Segmented-tab treatment: a sunken pill track holding pill-shaped links.
+   Gives the nav real visual weight (a filled active state, not just an
+   underline) while staying inside the existing monochrome+accent palette —
+   no new colors, no shadow. */
 .top-bar nav {
   display: flex;
-  gap: var(--space-6);
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  background: var(--surface-sunken);
+  padding: var(--space-1);
+  border-radius: 999px;
 }
 
 .top-bar nav a {
   color: var(--text-muted);
   text-decoration: none;
   font-size: 0.9rem;
-  border-bottom: 1px solid transparent;
-  padding-bottom: 2px;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  font-weight: 500;
+  padding: var(--space-2) var(--space-4);
+  border-radius: 999px;
+  transition: color 0.15s ease, background-color 0.15s ease;
 }
 
-.top-bar nav a:hover,
-.top-bar nav a[aria-current="page"] {
+.top-bar nav a:hover {
   color: var(--text);
-  border-bottom-color: var(--accent);
+  background: var(--surface);
+}
+
+.top-bar nav a:active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.top-bar nav a[aria-current="page"] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
 }
 
 .top-bar nav a:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 3px;
-  border-radius: 2px;
+  outline-offset: 2px;
+  border-radius: 999px;
 }
 
 /* ---------- Typography ---------- */
@@ -889,6 +943,35 @@ tr:hover td {
   margin-top: 3px;
 }
 
+/* ---------- Uncategorized headline stat (spec 017) ---------- */
+
+.headline-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-display);
+  font-size: 2.25rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+/* Red only when there's actually something to review (a real "off" state,
+   same convention as .calc-state-off) — a hypothetical all-zero month
+   wouldn't need this alarm color at all. */
+.headline-stat-value.negative {
+  color: var(--negative);
+}
+
+.headline-stat-label {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: var(--space-2);
+}
+
+.headline-stat-detail {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  margin-top: 2px;
+}
+
 /* ---------- Sortable category table + drill-down (spec 009) ---------- */
 
 .th-sort {
@@ -963,6 +1046,20 @@ button.cell-link:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   text-decoration: none;
+}
+
+/* Feature 017: exact-0.00 cells are the majority of this table (51.9%
+   re-verified live) — dim them so real numbers read first. Stays clickable
+   (hover/focus still resolve to full-strength text, see button.cell-link:hover
+   above) since a 0.00 total can still hide two offsetting transactions. */
+td.num.cell-zero,
+button.cell-link.cell-zero {
+  color: var(--text-muted);
+}
+
+button.cell-link.cell-zero:hover,
+button.cell-link.cell-zero:focus-visible {
+  color: var(--accent);
 }
 
 /* Child combinator, not a descendant selector, on purpose: `.drilldown-row
@@ -1238,4 +1335,109 @@ button.cell-link:disabled {
   align-items: center;
   margin-top: var(--space-4);
   flex-wrap: wrap;
+}
+
+/* ---------- All Transactions (spec 014) ---------- */
+
+/* "Needs review" alongside .pill.ok's existing positive treatment
+   (previously unused CSS, defined for 003 but never wired to a page) —
+   deliberately neutral/muted, not a warning colour: pending review isn't
+   wrong, just undecided, same reasoning as .calc-state-not_checked above. */
+.pill.pending {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-4);
+  align-items: flex-end;
+  margin: 0 0 var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.85rem;
+}
+
+.filter-field > span:first-child {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.date-range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+}
+
+/* Category cell: click-to-reveal (spec §E), not always-editable like Needs
+   Review's row — this table holds up to 100 rendered rows at once, and an
+   always-live <select> per row is real DOM/listener weight this screen
+   doesn't need paid up front. */
+.cat-edit-trigger {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+  max-width: 100%;
+  text-align: left;
+  display: block;
+}
+
+.cat-edit-trigger:hover {
+  background: var(--accent-soft);
+}
+
+.cat-edit-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cat-edit-trigger.muted {
+  color: var(--text-muted);
+}
+
+#transactions-table td[data-cell="category"] select {
+  width: 100%;
+  min-width: 9.5em;
+}
+
+#transactions-table td[data-cell="category"] .field-error {
+  min-height: 0;
+  margin-top: 2px;
+}
+
+#transactions-table td[data-cell="description"] {
+  max-width: 320px;
+}
+
+#transactions-table td[data-cell="rule"] {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
 }

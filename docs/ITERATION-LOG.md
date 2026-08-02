@@ -1,11 +1,18 @@
 # Iteration Log
 
 A record of each pass through the feature loop: what was proposed, what the user
-approved or rejected, what actually shipped, and what we learned.
+approved or rejected, what actually shipped, and what's genuinely new to learn.
 
 The loop: **discover** (UX lead explores the running app) → **gate** (user approves) →
 **spec** (UX) → **design** (architect) → **build** (architect backend, frontend UI) →
 **verify** (real browser, screenshots reviewed) → **document**.
+
+**Standing process rules now live in `.claude/skills/feature-loop/SKILL.md`**, not here —
+that includes when to skip discovery, how to scale the loop to the size of a change, the
+post-handoff data-safety check, checkpoint-commit cadence, and the token-usage rules.
+Entries below should stay factual (proposed/approved/shipped/incidents); only add to
+"Learned" when something is genuinely new, and fold anything durable into the skill file
+instead of repeating it in the next iteration's entry.
 
 ---
 

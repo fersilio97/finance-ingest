@@ -31,7 +31,22 @@ const ARTIFACTS = path.resolve("./.artifacts");
 
 const PAGES = [
   { name: "index", path: "/index.html", waitFor: "#review-table, #review-empty" },
+  {
+    name: "transactions",
+    path: "/transactions.html",
+    waitFor: "#transactions-table:not([hidden]), #transactions-empty:not([hidden]), #transactions-error:not([hidden])",
+  },
   { name: "insights", path: "/insights.html", waitFor: "#category-table, #category-empty" },
+  {
+    name: "reconciliation",
+    path: "/reconciliation.html",
+    // Not just "#reconciliation-list, #reconciliation-empty": today's live data
+    // is the empty state, and an empty #reconciliation-list has a 0-height box
+    // (no children) that querySelector finds first in DOM order, so a plain
+    // existence check never resolves to "visible" — it hung for the full
+    // timeout every run. Wait for whichever async outcome actually has content.
+    waitFor: "#reconciliation-list:not(:empty), #reconciliation-empty:not([hidden]), #reconciliation-error:not([hidden])",
+  },
 ];
 
 const VIEWPORTS = [

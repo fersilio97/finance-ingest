@@ -167,6 +167,7 @@ def init_db():
         conn.executescript(SCHEMA)
         _ensure_column(conn, "transactions", "original_id", "TEXT")
         _ensure_column(conn, "transactions", "batch_id", "INTEGER")
+        _ensure_column(conn, "transactions", "overridden_at", "TEXT")
         _ensure_column(conn, "uploads", "content_hash", "TEXT")
         _backfill_batch_ids(conn)
         _migrate_manual_balances_to_entries(conn)

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Finance Ingestion App — All Transactions</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="top-bar">
+      <h1>All Transactions</h1>
+      <nav>
+        <a href="index.html">Upload &amp; Review</a>
+        <a href="transactions.html" aria-current="page">All Transactions</a>
+        <a href="insights.html">Insights</a>
+        <a href="reconciliation.html">Reconciliation</a>
+      </nav>
+    </header>
+
+    <section class="panel">
+      <p class="eyebrow">Every transaction, not just the ones still awaiting a decision. Click a Category cell to fix a mistake — see spec 014 for why the rule that tagged a row stays visible even after you correct it.</p>
+
+      <form class="filter-bar" id="txn-filters">
+        <div class="filter-field">
+          <span>Date</span>
+          <div class="date-range-inputs">
+            <input type="date" id="filter-date-from" title="From date (inclusive)" />
+            <span aria-hidden="true">–</span>
+            <input type="date" id="filter-date-to" title="To date (inclusive)" />
+          </div>
+        </div>
+        <label class="filter-field">
+          <span>Account</span>
+          <select id="filter-account"><option value="">All accounts</option></select>
+        </label>
+        <label class="filter-field">
+          <span>Description</span>
+          <input type="text" id="filter-description" placeholder="Contains…" autocomplete="off" style="width:16em" />
+        </label>
+        <label class="filter-field">
+          <span>Category</span>
+          <select id="filter-category"><option value="">All categories</option></select>
+        </label>
+        <label class="filter-field">
+          <span>Status</span>
+          <select id="filter-status">
+            <option value="">All statuses</option>
+            <option value="needs_review">Needs review</option>
+            <option value="classified">Classified</option>
+          </select>
+        </label>
+        <button type="button" id="filter-clear" class="ghost">Clear filters</button>
+      </form>
+
+      <div class="table-scroll">
+        <table id="transactions-table">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div id="transactions-empty" class="empty-state" hidden></div>
+      <div id="transactions-error" class="field-error" hidden></div>
+      <div class="pagination" id="transactions-pagination" hidden>
+        <button type="button" id="page-prev" class="ghost">‹ Prev</button>
+        <span id="page-info" class="muted"></span>
+        <button type="button" id="page-next" class="ghost">Next ›</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="transactions.js"></script>
+</body>
+</html>

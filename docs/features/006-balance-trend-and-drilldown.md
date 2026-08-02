@@ -434,3 +434,32 @@ live data, since all 6 accounts in `data/finance.db` currently have at least one
   volume (~1,020 transactions total) this was 57KB / ~57ms, not something session 7 needs to
   paginate around yet, but flagging in case the dataset grows substantially before this is
   revisited.
+
+### Reopened-bug fix (2026-08-01)
+
+**Bug:** clicking an `Uncategorized` cell in the Insights category table always rendered
+"No transactions matched this cell — it may be a rounding artifact.", even for cells with a
+large nonzero total (e.g. 2025-01: −5,185.72 across 15 transactions). Filed in the vault as
+[[015 - Uncategorized column drilldown shows no transactions]].
+
+**Root cause:** `category = ?` in `list_transactions` (this session's own filter, above) can
+never match a row where `category IS NULL` — and that's every uncategorized transaction's
+actual stored value. `"Uncategorized"` is a label this codebase only ever manufactures at
+aggregation time, in `export.py`'s `build_global()` (`df["category"].fillna("Uncategorized")`)
+— it is never written back to the `transactions` table. So `GET /api/transactions?category=
+Uncategorized` was well-formed and silently wrong from the moment this filter shipped: 0 rows,
+every time, regardless of the real total sitting in the cell.
+
+**Fix:** `list_transactions` (`backend/app/api/routes.py`) now special-cases
+`category == "Uncategorized"` to emit `category IS NULL` instead of the parameterized
+`category = ?` clause. Every other category is unaffected (still an exact bind-param match).
+
+**Verified live:** before the fix, `/api/transactions?category=Uncategorized` returned `[]`
+unconditionally while `/api/insights/category-monthly` showed nonzero Uncategorized totals for
+16 of 19 months (total −8,166.18 net). After the fix, the same query returns 284 rows overall
+and 15 for `month=2025-01` specifically — matching the −5,185.72 shown in that cell. Re-ran
+through the real UI with Playwright: clicked the 2025-01 Uncategorized cell on the live
+`insights.html` page, panel header now reads "Uncategorized · 2025-01 · 15 transactions" and
+lists the real rows (Nespresso, Plus One Pharmacy, Walmart, ...) instead of the false-empty
+message. `node scripts/ui-check.mjs --page insights` re-run clean — no console errors, no
+failed requests, no new horizontal overflow.

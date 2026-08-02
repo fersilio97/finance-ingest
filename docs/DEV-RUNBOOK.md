@@ -25,8 +25,14 @@ restart dance needed. Frontend files are served statically, so a browser reload 
 curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8000/
 
 # start it (from repo root)
-cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --port 8000
+cd backend && ./.venv/Scripts/python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+`--host 0.0.0.0` (not the previous omitted-default, which is loopback-only) so the dev
+server is reachable from other devices on the LAN exactly like the Docker image already is
+(`backend/Dockerfile` has always bound `0.0.0.0`) — see
+[015](features/015-publish-lan-access.md) for the walkthrough and the reasoning. Checking
+your own box still uses `127.0.0.1` above; that's unaffected by this.
 
 If you must run it in the background, redirect output to a log you can read, and prefer
 fixing the running instance over starting a second one (port 8000 will conflict).
@@ -103,3 +109,11 @@ Never hardcode a colour; everything must work in light **and** dark. Money is
 - `docs/features/NNN-slug.md` — one per feature, co-authored across the three agents.
 - `docs/FEATURES.md` — index.
 - `docs/ITERATION-LOG.md` — what was proposed, approved, rejected, shipped, learned.
+
+## Running the three-agent loop (coordinator only)
+
+If you are the coordinator deciding how to run `fintech-ux-lead` / `solution-architect` /
+`fintech-frontend` for a change — which stages to run, when to skip discovery, how to
+scale to the size of the change, and the safety/token checklist for handoffs — see the
+`feature-loop` skill (`.claude/skills/feature-loop/SKILL.md`), not this file. This file is
+what the *agents* read; that skill is what governs how *you* orchestrate them.

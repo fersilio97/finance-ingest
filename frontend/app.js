@@ -66,7 +66,6 @@ async function loadSources() {
   SOURCES = await jsonFetch(`${API}/sources`);
   renderDropZones();
   renderSourceSelect();
-  renderAccountSelect();
 }
 
 async function loadCategories() {
@@ -461,7 +460,7 @@ document.getElementById("trigger-btn").addEventListener("click", async (e) => {
     // Re-fetch uploads too — this is what confirms processed_at got stamped
     // end-to-end: pending_files for the sources just processed should drop
     // to empty and the pipeline-tile summary should update to match.
-    await Promise.all([loadReview(), loadRules(), loadBalances(), loadUploads()]);
+    await Promise.all([loadReview(), loadRules(), loadUploads()]);
   } catch (err) {
     summaryEl.textContent = `Failed: ${err.message}`;
     summaryEl.classList.add("is-error");
@@ -1277,20 +1276,6 @@ function renderSourceSelect() {
   document.getElementById("rule-source").innerHTML = sourceOptionsHtml();
 }
 
-// Dropdown, not free text (feature 005's handoff left this an open choice —
-// the API only rejects blank/whitespace account names, nothing checks the
-// value against known accounts). A dropdown constrained to GET /api/sources'
-// account field closes that gap client-side: a typo'd account name would
-// silently create an orphan that no transaction's `account` will ever match,
-// so its reconciliation row would sit at `not_checked` forever with no way
-// to tell "genuinely unreconcilable" apart from "user fat-fingered the name".
-function renderAccountSelect() {
-  const select = document.getElementById("balance-account");
-  select.innerHTML =
-    `<option value="" selected disabled>Select account…</option>` +
-    SOURCES.map((s) => `<option value="${s.account}">${s.account}</option>`).join("");
-}
-
 function renderCategorySelect() {
   const select = document.getElementById("rule-category");
   select.innerHTML = categoryOptionsHtml();
@@ -1497,168 +1482,11 @@ ruleForm.addEventListener("submit", async (e) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Balance Entries (spec 008) — supersedes the minimal disclosed patch spec
-// 007 left here. Feature 005 (backend, Session 2) replaced the old
-// UNIQUE(account, month) manual_balances table with balance_entries, keyed
-// by an exact ISO-8601 datetime instead of a month — more than one entry per
-// account per month is now legitimate (e.g. "checked it twice this week").
-// This is the full UI 005's handoff note asked for: a datetime-local input,
-// an account dropdown (see renderAccountSelect() above for why dropdown over
-// free text), and per-entry delete (there is no PUT — editing is
-// delete-then-recreate, per 005's own handoff note).
-// ---------------------------------------------------------------------------
-
-// "2025-01-21T12:00:00" (or the no-seconds "2025-01-21T12:00" the server
-// also accepts as-is, per 005's handoff) -> "2025-01-21 12:00" for display.
-// The full raw value always stays available via `title` on the cell.
-function formatRecordedAt(iso) {
-  const [datePart, timePart = ""] = iso.split("T");
-  const hhmm = timePart.slice(0, 5);
-  return hhmm ? `${datePart} ${hhmm}` : datePart;
-}
-
-async function loadBalances() {
-  const table = document.getElementById("balances-table");
-  const tbody = table.querySelector("tbody");
-  const emptyEl = document.getElementById("balances-empty");
-  const errorEl = document.getElementById("balances-error");
-
-  errorEl.hidden = true;
-  emptyEl.hidden = true;
-  table.hidden = false;
-  skeletonRows(tbody, 4);
-
-  let entries;
-  try {
-    entries = await jsonFetch(`${API}/balance-entries`);
-  } catch (err) {
-    tbody.innerHTML = "";
-    table.hidden = true;
-    errorEl.hidden = false;
-    errorEl.textContent = `Couldn't load balance entries — ${err.message}.`;
-    return;
-  }
-
-  tbody.innerHTML = "";
-  if (entries.length === 0) {
-    table.hidden = true;
-    setEmpty(emptyEl, true, "No balance entries recorded yet — record one below to start reconciling on the Insights page.");
-    return;
-  }
-
-  // Most-recently-recorded first — with multiple entries per account per
-  // month now legitimate (the whole point of 005), a plain API-order list
-  // (account, then recorded_at ascending) buries what the user just added
-  // at the bottom every time.
-  const sorted = entries.slice().sort((a, b) => (a.recorded_at < b.recorded_at ? 1 : -1));
-  for (const b of sorted) {
-    tbody.appendChild(renderBalanceRow(b));
-  }
-}
-
-function renderBalanceRow(entry) {
-  const tr = document.createElement("tr");
-  tr.innerHTML =
-    `<td data-cell="account"></td><td data-cell="recorded"></td>` +
-    `<td class="num" data-cell="balance"></td><td data-cell="actions"></td>`;
-  tr.querySelector('[data-cell="account"]').textContent = entry.account;
-  const recordedCell = tr.querySelector('[data-cell="recorded"]');
-  recordedCell.textContent = formatRecordedAt(entry.recorded_at);
-  recordedCell.title = entry.recorded_at;
-  tr.querySelector('[data-cell="balance"]').textContent = entry.balance.toFixed(2);
-
-  const actionsCell = tr.querySelector('[data-cell="actions"]');
-  const delBtn = document.createElement("button");
-  delBtn.type = "button";
-  delBtn.className = "ghost";
-  delBtn.textContent = "Delete";
-  const rowErrorEl = document.createElement("div");
-  rowErrorEl.className = "field-error";
-  delBtn.addEventListener("click", async () => {
-    delBtn.disabled = true;
-    rowErrorEl.textContent = "";
-    try {
-      await jsonFetch(`${API}/balance-entries/${entry.id}`, { method: "DELETE" });
-      await loadBalances();
-    } catch (err) {
-      rowErrorEl.textContent = err.message;
-      delBtn.disabled = false;
-    }
-  });
-  actionsCell.append(delBtn, rowErrorEl);
-
-  return tr;
-}
-
-document.getElementById("balance-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const form = e.target;
-  const errorEl = document.getElementById("balance-error");
-  errorEl.textContent = "";
-
-  const account = form.account.value;
-  const recordedRaw = form.recorded_at.value; // datetime-local: "YYYY-MM-DDTHH:MM"
-  if (!account) {
-    errorEl.textContent = "Pick an account.";
-    return;
-  }
-  if (!recordedRaw) {
-    errorEl.textContent = "Pick a date and time.";
-    return;
-  }
-  // The server stores recorded_at verbatim and does not normalize it (005's
-  // handoff note) — a no-seconds datetime-local value would otherwise be
-  // stored as e.g. "...T12:00" alongside other entries stored with ":00"
-  // seconds, which is harmless to the API but needlessly inconsistent to
-  // look at in the list above. Normalize on the way in instead.
-  const recordedAt = recordedRaw.length === 16 ? `${recordedRaw}:00` : recordedRaw;
-
-  const body = {
-    account,
-    recorded_at: recordedAt,
-    balance: Number(form.balance.value),
-  };
-  try {
-    await jsonFetch(`${API}/balance-entries`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    form.reset();
-    loadBalances();
-  } catch (err) {
-    errorEl.textContent = err.message;
-  }
-});
-
-// The Insights reconciliation panel's remedy link (spec 008, replacing spec
-// 003's month-scoped version) jumps here with ?account=... — entries are
-// timestamped, not month-keyed, so there is no single "the month" left to
-// prefill; only the account carries over. Selects that account in the form
-// and focuses the datetime field so recording a fresh entry for it is one
-// date-pick away, whether that's because nothing has been recorded for this
-// account yet or because an existing entry couldn't be reconciled and the
-// user wants to add a corrected one (delete-then-recreate — see the
-// balance-entries table's own Delete action above).
-function prefillBalanceFormFromQuery() {
-  const params = new URLSearchParams(location.search);
-  const account = params.get("account");
-  if (!account) return;
-  const accountSelect = document.getElementById("balance-account");
-  const recordedInput = document.getElementById("balance-recorded-at");
-  const hasOption = Array.from(accountSelect.options).some((o) => o.value === account);
-  if (hasOption) accountSelect.value = account;
-  document.getElementById("balances-section")?.scrollIntoView({ block: "start" });
-  recordedInput.focus();
-}
-
 (async function init() {
   await Promise.all([loadSources(), loadCategories()]);
   renderCategorySelect();
   // loadUploads() must come after loadSources() (it needs the drop zones
   // already built by renderDropZones() to have somewhere to render into) —
   // guaranteed here since loadSources() is awaited above.
-  await Promise.all([loadReview(), loadRules(), loadBalances(), loadUploads()]);
-  prefillBalanceFormFromQuery();
+  await Promise.all([loadReview(), loadRules(), loadUploads()]);
 })();

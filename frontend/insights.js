@@ -50,16 +50,78 @@ async function renderCategoryTable() {
     emptyEl.hidden = true;
     errorEl.hidden = false;
     errorEl.textContent = `Couldn't load category totals — ${err.message}.`;
+    renderUncategorizedHeadline(null, err);
     return;
   }
 
   categoryRows = rows;
   setEmpty(emptyEl, rows.length === 0, "No data yet — upload files and run the pipeline.");
   table.hidden = rows.length === 0;
+  renderUncategorizedHeadline(rows, null);
   if (rows.length === 0) return;
 
   openDrilldown = null;
   renderCategoryTableBody();
+}
+
+// Feature 017: this reuses the one category-monthly fetch renderCategoryTable()
+// already makes — no second request — so the headline and the table can never
+// disagree, and it stays in sync automatically if the underlying data changes.
+function renderUncategorizedHeadline(rows, error) {
+  const loadingEl = document.getElementById("uncategorized-headline-loading");
+  const contentEl = document.getElementById("uncategorized-headline");
+  const emptyEl = document.getElementById("uncategorized-headline-empty");
+  const errorEl = document.getElementById("uncategorized-headline-error");
+
+  loadingEl.hidden = true;
+
+  if (error) {
+    contentEl.hidden = true;
+    emptyEl.hidden = true;
+    errorEl.hidden = false;
+    errorEl.textContent = `Couldn't load the uncategorized total — ${error.message}.`;
+    return;
+  }
+  errorEl.hidden = true;
+
+  if (!rows || rows.length === 0) {
+    contentEl.hidden = true;
+    emptyEl.hidden = false;
+    emptyEl.textContent = "No data yet — upload files and run the pipeline.";
+    return;
+  }
+
+  const total = rows.reduce((sum, r) => sum + (r.Uncategorized || 0), 0);
+  const monthsWithSome = rows.filter((r) => r.Uncategorized !== 0).length;
+  // "Largest" by absolute value — an Uncategorized month can be net-positive
+  // (unclassified income) as easily as net-negative, and both are equally
+  // worth surfacing here.
+  const worstMonth = rows.reduce(
+    (worst, r) => (Math.abs(r.Uncategorized || 0) > Math.abs(worst?.Uncategorized || 0) ? r : worst),
+    null,
+  );
+
+  emptyEl.hidden = true;
+  contentEl.hidden = false;
+  contentEl.innerHTML = "";
+
+  const valueEl = document.createElement("div");
+  valueEl.className = "headline-stat-value" + (total !== 0 ? " negative" : "");
+  valueEl.textContent = total.toFixed(2);
+
+  const labelEl = document.createElement("div");
+  labelEl.className = "headline-stat-label";
+  const monthWord = rows.length === 1 ? "month" : "months";
+  labelEl.textContent = `Across all ${rows.length} ${monthWord}, ${monthsWithSome} with unclassified activity.`;
+
+  contentEl.append(valueEl, labelEl);
+
+  if (worstMonth && worstMonth.Uncategorized !== 0) {
+    const detailEl = document.createElement("div");
+    detailEl.className = "headline-stat-detail";
+    detailEl.textContent = `Worst single month: ${worstMonth.month} at ${worstMonth.Uncategorized.toFixed(2)}.`;
+    contentEl.appendChild(detailEl);
+  }
 }
 
 function sortComparator(col, dir) {
@@ -74,9 +136,24 @@ function sortComparator(col, dir) {
   };
 }
 
+// Feature 017: the API returns columns in a fixed server order (month, then
+// each real category, then Uncategorized second-to-last, then Total) — that
+// order made Uncategorized column 22 of 24, invisible without horizontal
+// scroll at a normal desktop width even though it was the single largest
+// number in the table (discovery: -8,166.18 stale-total / -5,625.08
+// re-verified live across the 19 months on disk, -5,185.72 of it in one
+// month alone). Pin it, along with the Total it's most often read alongside,
+// right after `month`. This only reorders *columns* — row sort and the
+// per-cell drill-down are both keyed by column *name*, not position, so
+// neither is affected.
+function orderedColumns(rawColumns) {
+  const rest = rawColumns.filter((c) => c !== "month" && c !== "Uncategorized" && c !== "Total");
+  return ["month", "Uncategorized", "Total", ...rest];
+}
+
 function renderCategoryTableBody() {
   const table = document.getElementById("category-table");
-  const columns = Object.keys(categoryRows[0]);
+  const columns = orderedColumns(Object.keys(categoryRows[0]));
 
   const thead = document.createElement("thead");
   const headRow = document.createElement("tr");
@@ -125,6 +202,13 @@ function renderCategoryTableBody() {
       if (typeof val === "number") {
         td.classList.add("num");
         const formatted = val.toFixed(2);
+        // Feature 017: 51.9% of this table's cells (re-verified live) are
+        // exact 0.00 — dim them so a real number never has to compete
+        // visually with a wall of zeros. Exact-zero only (not "small"): a
+        // -0.01 rounding artifact is still real money someone should be able
+        // to spot at a glance.
+        const isZero = val === 0;
+        if (isZero) td.classList.add("cell-zero");
         // "Total" is a derived sum across categories, not a real category —
         // /api/transactions?category=Total would just match zero rows.
         // "month" never reaches here (it's a string). Every real category
@@ -133,7 +217,7 @@ function renderCategoryTableBody() {
         if (col !== "Total") {
           const cellBtn = document.createElement("button");
           cellBtn.type = "button";
-          cellBtn.className = "cell-link";
+          cellBtn.className = "cell-link" + (isZero ? " cell-zero" : "");
           cellBtn.textContent = formatted;
           cellBtn.title = `View ${col} transactions for ${r.month}`;
           cellBtn.addEventListener("click", () => toggleDrilldown(tr, col, r.month, columns.length, cellBtn));
@@ -305,131 +389,6 @@ function renderDrilldownError(container, category, month, err) {
   errEl.className = "field-error";
   errEl.textContent = `Couldn't load transactions — ${err.message}.`;
   container.appendChild(errEl);
-}
-
-/* ==========================================================================
-   Reconciliation — spec 003's tri-state visual language, per-entry (008)
-   ========================================================================== */
-
-const STATE_LABEL = { not_checked: "Not checked", balanced: "Balanced", off: "Off by" };
-const STATE_ORDER = { off: 0, not_checked: 1, balanced: 2 }; // differences first, then unknowns, then the quiet green tail
-
-function money(v) {
-  return v != null ? v.toFixed(2) : "—";
-}
-
-function reconciliationSummary(rows) {
-  const summaryEl = document.getElementById("reconciliation-summary");
-  const offCount = rows.filter((r) => r.status === "off").length;
-  const checkedCount = rows.filter((r) => r.status !== "not_checked").length;
-
-  summaryEl.className = "calc-summary";
-  if (offCount > 0) {
-    summaryEl.classList.add("negative");
-    summaryEl.textContent = `${offCount} of ${rows.length} recorded balance${rows.length === 1 ? "" : "s"} ${offCount === 1 ? "is" : "are"} off.`;
-  } else if (checkedCount === 0) {
-    summaryEl.classList.add("muted");
-    summaryEl.textContent = `${rows.length} recorded balance${rows.length === 1 ? "" : "s"} can't be checked yet — no transaction data covers them.`;
-  } else if (checkedCount === rows.length) {
-    summaryEl.classList.add("positive");
-    summaryEl.textContent = `All ${checkedCount} recorded balance${checkedCount === 1 ? "" : "s"} reconcile.`;
-  } else {
-    const notChecked = rows.length - checkedCount;
-    summaryEl.classList.add("positive");
-    summaryEl.textContent = `All ${checkedCount} checked balances reconcile (${notChecked} not yet checkable).`;
-  }
-}
-
-function buildReconciliationCard(r) {
-  const card = document.createElement("div");
-  card.className = `calc-card calc-state-${r.status}`;
-
-  const identity = document.createElement("div");
-  identity.className = "calc-identity";
-  const when = formatRecordedAt(r.recorded_at);
-  identity.textContent = `${r.account} · ${when}`;
-  identity.title = `${r.account} · ${r.recorded_at}`;
-
-  const detail = document.createElement("div");
-  detail.className = "calc-detail";
-
-  const derivedEl = document.createElement("span");
-  derivedEl.className = r.derived_balance == null ? "calc-money muted" : "calc-money";
-  derivedEl.textContent = money(r.derived_balance);
-  derivedEl.title = "Derived from transactions, as of this entry's date";
-
-  const recordedEl = document.createElement("span");
-  recordedEl.className = "calc-money";
-  recordedEl.textContent = money(r.recorded_balance);
-  recordedEl.title = "What you recorded";
-
-  const statusEl = document.createElement("span");
-  statusEl.className = "calc-status";
-  if (r.status === "off") {
-    const sign = r.diff > 0 ? "+" : "";
-    statusEl.textContent = `Off by ${sign}${r.diff.toFixed(2)}`;
-  } else {
-    statusEl.textContent = STATE_LABEL[r.status];
-    if (r.status === "not_checked") {
-      statusEl.title = "No transaction data covers this account on or before this date yet.";
-    }
-  }
-
-  detail.append(derivedEl, recordedEl, statusEl);
-
-  if (r.status === "not_checked") {
-    const remedy = document.createElement("a");
-    remedy.className = "calc-remedy";
-    remedy.href = `index.html?account=${encodeURIComponent(r.account)}#balances-section`;
-    remedy.textContent = "Review in Balances →";
-    detail.appendChild(remedy);
-  }
-
-  card.append(identity, detail);
-  return card;
-}
-
-async function renderReconciliationList() {
-  const container = document.getElementById("reconciliation-list");
-  const emptyEl = document.getElementById("reconciliation-empty");
-  const errorEl = document.getElementById("reconciliation-error");
-  const summaryEl = document.getElementById("reconciliation-summary");
-
-  errorEl.hidden = true;
-  let rows;
-  try {
-    rows = await jsonFetch(`${API}/reconciliation`);
-  } catch (err) {
-    container.innerHTML = "";
-    summaryEl.textContent = "";
-    emptyEl.hidden = true;
-    errorEl.hidden = false;
-    errorEl.textContent = `Couldn't load reconciliation — ${err.message}.`;
-    return;
-  }
-
-  container.innerHTML = "";
-  summaryEl.textContent = "";
-  if (rows.length === 0) {
-    emptyEl.hidden = false;
-    emptyEl.innerHTML = "";
-    const text = document.createElement("span");
-    text.textContent = "No balances recorded yet — ";
-    const link = document.createElement("a");
-    link.className = "calc-remedy";
-    link.href = "index.html#balances-section";
-    link.textContent = "record one to start reconciling.";
-    emptyEl.append(text, link);
-    return;
-  }
-  emptyEl.hidden = true;
-
-  reconciliationSummary(rows);
-
-  const sorted = rows.slice().sort((a, b) => STATE_ORDER[a.status] - STATE_ORDER[b.status]);
-  for (const r of sorted) {
-    container.appendChild(buildReconciliationCard(r));
-  }
 }
 
 /* ==========================================================================
@@ -942,5 +901,5 @@ window.addEventListener("resize", () => {
 });
 
 (async function init() {
-  await Promise.all([renderCategoryTable(), renderReconciliationList(), loadAndRenderBalance()]);
+  await Promise.all([renderCategoryTable(), loadAndRenderBalance()]);
 })();
