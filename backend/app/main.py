@@ -6,7 +6,8 @@ from fastapi.staticfiles import StaticFiles
 from .api.insights import router as insights_router
 from .api.routes import router as api_router
 from .db import get_conn, init_db
-from .seed_rules import seed as seed_rules
+from .pipeline.enrich import enrich_all
+from .seed_rules import ensure_default_rules, seed as seed_rules
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = REPO_ROOT / "frontend"
@@ -21,6 +22,11 @@ def on_startup():
     init_db()
     with get_conn() as conn:
         seed_rules(conn)
+        added = ensure_default_rules(conn)
+    # Outside the with-block: enrich_all opens its own connection and must see
+    # the committed rules.
+    if added:
+        enrich_all()
 
 
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
