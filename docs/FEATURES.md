@@ -23,6 +23,7 @@ engineer writes the verification evidence.
 | [015](features/015-publish-lan-access.md) | Publish/LAN access: reach the app from another device's browser on the home network — dev-run command now binds `0.0.0.0` (matching Docker's existing bind), plus a Windows walkthrough (LAN IP, firewall rule) (backend/infra) | Shipped | 8 |
 | [016](features/016-sticky-prominent-nav.md) | Top nav: sticky (`position: sticky`, pinned while scrolling) + more visual weight (segmented pill-tab treatment) across all 4 pages (frontend) | Shipped | 8 |
 | [017](features/017-insights-unclassified-first.md) | Insights: lead with the unclassified/Uncategorized total (new headline stat panel) + pin Uncategorized/Total near the front of the category table, dim exact-0.00 cells (frontend) | Shipped | 8 |
+| [018](features/018-default-structural-rules.md) | Default rules for structural non-spend rows (k401 fees / realized gain-loss, money-market sweeps, BoA card-payment rows), topped up on every startup; resolves backlog #7 except Zelle (backend) | Shipped | 9 |
 
 **Status values:** Proposed · Approved · In progress · Shipped · Rejected
 
